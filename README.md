@@ -1,5 +1,6 @@
 # CAIRN
-Project CAIRN
+See Notion for full Project Description: https://applesclimatespace.notion.site/Project-CAIRN-190f05ec7e58807f84a6fbd535c17188?pvs=4
+
 # Project CAIRN
 
 ## Collection, Analysis, and Interpretation of Regulatory Networks
