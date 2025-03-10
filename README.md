@@ -13,7 +13,7 @@ Project CAIRN is a set of tools designed to unlock innovation in energy regulati
 - [System Architecture](#system-architecture)
 - [Core Components](#core-components)
   - [Document Storage (Backblaze B2)](#document-storage-backblaze-b2)
-  - [Database (PostgreSQL)](#database-postgresql)
+  - [Database (Supabase/PostgreSQL)](#database-supabasepostgresql)
   - [Metadata Management (Google Sheets)](#metadata-management-google-sheets)
   - [Document Processing Pipeline](#document-processing-pipeline)
 - [Getting Started](#getting-started)
@@ -24,6 +24,7 @@ Project CAIRN is a set of tools designed to unlock innovation in energy regulati
   - [Uploading Documents](#uploading-documents)
   - [Managing Metadata](#managing-metadata)
   - [Searching Documents](#searching-documents)
+  - [Collaborative Tagging](#collaborative-tagging)
 - [Development Roadmap](#development-roadmap)
 - [Contributing](#contributing)
 - [License](#license)
@@ -45,9 +46,9 @@ CAIRN follows a modular architecture with several integrated components:
 ```
 ┌───────────────────┐     ┌───────────────────┐     ┌───────────────────┐
 │                   │     │                   │     │                   │
-│   Document        │     │   PostgreSQL      │     │   Metadata        │
-│   Storage         │────▶│   Database        │◀───▶│   Management      │
-│   (Backblaze B2)  │     │                   │     │   (Google Sheets) │
+│   Document        │     │   Supabase        │     │   Metadata        │
+│   Storage         │────▶│   PostgreSQL      │◀───▶│   Management      │
+│   (Backblaze B2)  │     │   Database        │     │   (Google Sheets) │
 │                   │     │                   │     │                   │
 └───────────────────┘     └─────────┬─────────┘     └───────────────────┘
                                     │
@@ -58,14 +59,14 @@ CAIRN follows a modular architecture with several integrated components:
                           │   Processing      │
                           │   Pipeline        │
                           │                   │
-                          └───────────────────┘
+                          └─────────┬─────────┘
                                     │
                                     ▼
                           ┌───────────────────┐
                           │                   │
-                          │   LLM-Based       │
-                          │   Analysis &      │
-                          │   Interactions    │
+                          │   RAG-Enhanced    │
+                          │   LLM Analysis    │
+                          │   & Interactions  │
                           │                   │
                           └───────────────────┘
 ```
@@ -86,9 +87,18 @@ The `B2Uploader` class handles the interaction with Backblaze B2, providing meth
 - Check if files already exist to avoid duplication
 - Manage metadata for uploaded files
 
-### Database (PostgreSQL)
+### Database (Supabase/PostgreSQL)
 
-PostgreSQL serves as the central database for CAIRN, storing all metadata, relationships, and extracted content from documents. The database schema includes:
+CAIRN leverages Supabase, a powerful open-source Firebase alternative built on PostgreSQL, to provide:
+
+- Fully managed PostgreSQL database
+- Real-time data synchronization
+- Authentication and authorization
+- REST and GraphQL APIs for easy integration
+- Row-level security for fine-grained access control
+- Collaborative features across multiple users
+
+The database schema includes:
 
 - `utilities` - Information about utility companies
 - `regulatory_bodies` - Regulatory agencies and commissions
@@ -101,7 +111,7 @@ PostgreSQL serves as the central database for CAIRN, storing all metadata, relat
 - `document_summaries` - LLM-generated summaries
 - `external_metadata_syncs` - Tracking for external metadata synchronization
 
-The database supports full-text search using PostgreSQL's `tsvector` type, allowing for efficient searching across the entire document corpus.
+Supabase's real-time capabilities enable collaborative tagging and metadata management, allowing multiple users to work simultaneously on document classification and organization. Changes made by one user are instantly visible to others, creating a seamless collaborative experience.
 
 ### Metadata Management (Google Sheets)
 
@@ -109,7 +119,7 @@ To make metadata management accessible to non-technical users, CAIRN integrates 
 
 - A familiar interface for viewing and editing document metadata
 - Collaborative tagging and categorization
-- Bi-directional synchronization with the PostgreSQL database
+- Bi-directional synchronization with the Supabase PostgreSQL database
 
 The system uses four sheets:
 1. **Documents** - Main sheet for document metadata and tagging
@@ -127,7 +137,7 @@ The `SheetsMetadataManager` class handles:
 
 The document processing pipeline handles:
 - PDF upload to Backblaze B2
-- Metadata extraction and storage in PostgreSQL
+- Metadata extraction and storage in Supabase
 - Text extraction from PDFs
 - Full-text indexing for search
 
@@ -141,7 +151,7 @@ Future enhancements will include:
 ### Prerequisites
 
 - Python 3.8+
-- PostgreSQL 13+
+- Supabase account
 - Google Cloud account (for Sheets API)
 - Backblaze B2 account
 
@@ -158,10 +168,10 @@ Future enhancements will include:
    pip install -r requirements.txt
    ```
 
-3. Set up the database:
-   ```bash
-   psql -U postgres -f schema/create_database.sql
-   ```
+3. Set up Supabase:
+   - Create a new Supabase project
+   - Use the SQL scripts in the `schema/` directory to create the required tables
+   - Configure authentication as needed for your users
 
 4. Configure API credentials (see Configuration section)
 
@@ -170,12 +180,10 @@ Future enhancements will include:
 Create a `config.ini` file with the following structure:
 
 ```ini
-[database]
-host = localhost
-port = 5432
-name = cairn_db
-user = postgres
-password = your_password
+[supabase]
+url = https://your-project-ref.supabase.co
+key = your_supabase_api_key
+service_role_key = your_service_role_key
 
 [backblaze]
 key_id = your_b2_key_id
@@ -193,16 +201,13 @@ spreadsheet_id = your_spreadsheet_id
 
 ```python
 from cairn.storage import B2Uploader
-from cairn.database import CAIRNDatabase
+from cairn.database import SupabaseClient
 from cairn.utils import upload_to_b2_and_database
 
 # Initialize components
-db = CAIRNDatabase(
-    db_host='localhost',
-    db_port=5432,
-    db_name='cairn_db',
-    db_user='postgres',
-    db_password='your_password'
+db = SupabaseClient(
+    supabase_url='https://your-project-ref.supabase.co',
+    supabase_key='your_supabase_api_key'
 )
 
 uploader = B2Uploader(
@@ -262,22 +267,53 @@ for doc in results:
     print("-" * 50)
 ```
 
+### Collaborative Tagging
+
+One of CAIRN's powerful features is collaborative tagging through Supabase's real-time capabilities:
+
+```python
+# Subscribe to changes in document tags
+subscription = db.subscribe_to_table(
+    table="document_tags",
+    event="*",  # Listen for all events (INSERT, UPDATE, DELETE)
+    callback=handle_tag_changes
+)
+
+# Define a callback to handle tag changes
+def handle_tag_changes(payload):
+    print(f"Tag change detected: {payload['eventType']}")
+    print(f"Document ID: {payload['new']['document_id']}")
+    print(f"Tag ID: {payload['new']['tag_id']}")
+    
+    # Update UI or perform other actions based on the change
+    if payload['eventType'] == 'INSERT':
+        update_document_tags_in_ui(payload['new']['document_id'])
+```
+
+Multiple users can tag documents simultaneously, with changes reflected in real-time across all connected clients.
+
 ## Development Roadmap
 
 ### Phase 1 (Q1–Q2 2025): Data Gathering & MVP Prototype
 
 - [x] Define database schema
 - [x] Implement B2 storage integration
+- [x] Set up Supabase for collaborative database access
 - [x] Create metadata management system
 - [ ] Develop basic document processing pipeline
 - [ ] Build MVP dashboard
 
 ### Phase 2 (Q2–Q3 2025): Advanced LLM-Based Interactions
 
-- [ ] Integrate advanced LLM models
+- [ ] Implement Retrieval-Augmented Generation (RAG) architecture
+  - [ ] Create vector embeddings for document content
+  - [ ] Develop semantic search capabilities using embeddings
+  - [ ] Build context retrieval systems for LLM prompting
+  - [ ] Design prompt templates with domain-specific knowledge
+- [ ] Integrate advanced LLM models (e.g., OpenAI GPT-4, Claude, or open-source alternatives)
 - [ ] Implement source traceability and citation tracking
-- [ ] Create visualization components
-- [ ] Develop notification system
+- [ ] Create visualization components for document relationships
+- [ ] Develop notification system for docket updates
 
 ### Phase 3 (Q3–Q4 2025): Agentic Stakeholder Simulations
 
@@ -293,3 +329,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
