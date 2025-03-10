@@ -298,8 +298,8 @@ Multiple users can tag documents simultaneously, with changes reflected in real-
 
 - [x] Define database schema
 - [x] Implement B2 storage integration
-- [x] Set up Supabase for collaborative database access
-- [x] Create metadata management system
+- [ ] Set up Supabase for collaborative database access
+- [ ] Create metadata management system
 - [ ] Develop basic document processing pipeline
 - [ ] Build MVP dashboard
 
