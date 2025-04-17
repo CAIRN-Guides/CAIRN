@@ -73,13 +73,3 @@ download_documents(links, outdir="~/Downloads/utc_250108", delay=1.0)  # fetch
 | `No filings for docket … in YEAR` | That year’s folder hasn’t been created yet. | Ignore—the script continues. |
 | `404 Client Error` when downloading | Document has been sealed/confidential. | The script skips after logging the error. |
 | Very slow / connection reset | UTC server throttling. | Increase `delay` to 1 – 2 s. |
-
-### 8  Extending the tool
-
-* **Batch pulls** – Wrap `fetch_docket()` in a loop over many docket numbers.  
-* **Metadata CSV** – Replace the download loop with code that writes out `docID, filename, docket, year`.  
-* **CLI version** – Use the earlier `argparse` variant if you prefer command‑line usage.
-
----
-
-With this guide and the four repo files (`utc_downloader_nb.py`, `notebook_demo.ipynb`, `requirements.txt`, `README.md`), anyone on your team can explore or archive UTC dockets in minutes—no web clicking required.
