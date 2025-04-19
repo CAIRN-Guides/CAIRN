@@ -1,4 +1,4 @@
-# utc_downloader_nb.py  –  v2.1  (with detailed inline documentation)
+# utc_downloader_nb.py  –  (with detailed inline documentation)
 """
 Helper utilities for downloading **all** filings in a Washington UTC docket.
 
