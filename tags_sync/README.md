@@ -1,13 +1,11 @@
-# CAIRN Sheet Sync 🔗📄 → 🐘 Supabase
+# CAIRN Tags Sync: BackBlaze <-> Supabase <-> Googlesheets 
 
 A **one‑command bridge** between a Google Sheet that holds CAIRN document tags and a
 three‑table Supabase schema (`files`, `tags`, `file_tags`).  
-Useful when you want to expose your tagging data to downstream apps—or just keep a
-single source‑of‑truth.
 
 ---
 
-## 🚀 30‑Second Quick Start
+##  Quick Start Guide
 
 ```bash
 # 1 – Clone & install
