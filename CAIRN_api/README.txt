@@ -1,6 +1,6 @@
 # CAIRN API
 
-## 📂 Repository Structure
+##  Repository Structure
 
 ```
 ├── backend/
@@ -16,7 +16,7 @@
 
 ---
 
-## 🔧 Prerequisites
+## Prerequisites
 
 - Python 3.10+
 - PowerShell (Windows) or bash (macOS/Linux)
@@ -26,7 +26,7 @@
 
 ---
 
-## 🚀 Backend Setup (FastAPI)
+## Backend Setup (FastAPI)
 
 1. **Navigate & create venv**
    ```powershell
@@ -122,10 +122,4 @@
 - `Missing env vars`: Ensure `.env` files are in correct folder and activated.
 - `ModuleNotFoundError`: Activate the correct venv before `pip install` and running.
 - `ResponseValidationError`: All Pydantic fields are `Optional[...]`—the backend must match the Supabase schema exactly.
-
----
-
-## 📖 License
-
-MIT © Your Name
 
