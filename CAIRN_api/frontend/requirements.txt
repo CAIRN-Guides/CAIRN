@@ -4,3 +4,5 @@ python-dotenv
 supabase
 b2sdk
 pydantic
+streamlit
+requests
