@@ -6,3 +6,6 @@ b2sdk
 pydantic
 streamlit
 requests
+streamlit
+pandas
+streamlit-aggrid
