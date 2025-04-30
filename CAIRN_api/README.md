@@ -27,7 +27,7 @@
 
 ## CAIRN Backend Setup Guide (FastAPI)
 
-This guide will walk you through setting up the FastAPI backend for the CAIRN project on your local machine. This backend handles the interactions between the frontend and the rest of the CAIRN system. 
+This guide will walk you through setting up the FastAPI backend for CAIRN  on your local machine. This backend handles the interactions between the frontend and the rest of CAIRN. 
 
 ### Prerequisites
 
@@ -130,15 +130,12 @@ Before you begin, ensure you have the following installed:
         ```
         You should receive a JSON response from your API if the endpoint is working correctly.
 
----
-
-Okay, let's structure the Frontend Setup guide similarly, focusing on clarity and logical flow for a new user.
 
 -----
 
 ## CAIRN Frontend Setup Guide (Streamlit)
 
-This guide details how to set up and run the Streamlit frontend for the CAIRN project. This frontend provides a web-based user interface to interact with the CAIRN backend API, allowing you to to query CAIRN for documents based on tags. 
+This guide details how to set up and run the Streamlit frontend for CAIRN. This frontend provides a web-based user interface to interact with the CAIRN backend API, allowing you to to query CAIRN for documents based on tags. 
 
 ### Prerequisites
 
