@@ -10,7 +10,8 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
 # ─── Load env & page setup ─────────────────────────────────────────────────────
 load_dotenv()
-API_URL = os.getenv("API_URL", "http://localhost:8000/documents")
+# API_URL = os.getenv("API_URL", "http://localhost:8000/generate_tags")
+API_URL = "http://localhost:8000/generate_tags"
 
 st.set_page_config(page_title="CAIRN Tagger", layout="wide")
 st.title("📚 CAIRN Document Tagger")
@@ -22,4 +23,14 @@ DOC_NAME = 'PSE_IRP_ElectricChapters_3.31.2025.pdf'
 
 # ─── Fetch & display ───────────────────────────────────────────────────────────
 if st.sidebar.button("Load Documents"):
-    pass
+    resp = requests.get(API_URL)
+    if resp.status_code != 200:
+        st.error(f"API Error {resp.status_code}: {resp.text}")
+        st.stop()
+    
+    overview = resp.json().get("overview", "")
+    content = resp.json().get("content", "")
+
+    st.write(overview)
+
+    st.write(content)
