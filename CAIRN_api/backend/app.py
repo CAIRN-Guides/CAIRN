@@ -78,16 +78,25 @@ class DocumentsResponse(BaseModel):
     page_size: int
 
 # ─── App & CORS ────────────────────────────────────────────────────────────────
+
+# Load allowed origins from environment variable set in Render
+# Default to an empty list if not set, preventing any cross-origin requests by default
+ALLOWED_ORIGINS_STR = os.getenv("ALLOWED_ORIGINS", "")
+ALLOWED_ORIGINS = [origin.strip() for origin in ALLOWED_ORIGINS_STR.split(",") if origin.strip()]
+# If the env var was empty or just contained commas/whitespace, ALLOWED_ORIGINS will be []
+
 app = FastAPI(
     title="CAIRN Document Finder API",
     version="1.0",
     description="Search & retrieve all metadata fields plus presigned B2 URLs"
 )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in production!
-    allow_methods=["GET"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS, # Use the loaded list from environment variable
+    allow_credentials=True,       # Often needed, set depending on auth needs
+    allow_methods=["GET", "OPTIONS"], # Add "OPTIONS" for browser preflight requests
+    allow_headers=["*"],          # Allows all headers, you could restrict if needed
 )
 
 # ─── Helper: B2 presign ─────────────────────────────────────────────────────────
