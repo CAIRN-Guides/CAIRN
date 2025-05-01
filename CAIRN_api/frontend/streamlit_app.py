@@ -10,7 +10,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
 # ─── Load env & page setup ─────────────────────────────────────────────────────
 load_dotenv()
-API_URL = os.getenv("API_URL", "http://localhost:8000/documents")
+API_URL = "https://cairn-backend.onrender.com"
 
 st.set_page_config(page_title="CAIRN Finder", layout="wide")
 st.title("📚 CAIRN Document Finder")
