@@ -1,11 +1,5 @@
-fastapi
-uvicorn
-python-dotenv
-supabase
-b2sdk
-pydantic
 streamlit
 requests
-streamlit
 pandas
 streamlit-aggrid
+python-dotenv
