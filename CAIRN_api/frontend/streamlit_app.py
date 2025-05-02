@@ -15,33 +15,21 @@ API_URL = os.getenv("API_URL", "https://cairn-backend.onrender.com") # Use geten
 
 st.set_page_config(page_title="CAIRN Finder", layout="wide")
 
-# ─── Title and Logo Area ───────────────────────────────────────────────────────
-col2, col1 = st.columns([4, 1]) # Ratio of width for title vs image
+
+# Replace the old st.title line with this columns block:
+col1, col2 = st.columns([1, 5]) # Adjust ratio ([1, 5] means col2 is 5x wider than col1)
 
 with col1:
-    st.title(" CAIRN Document Finder")
+    # --- Add your image here ---
+    # IMPORTANT: Replace "cairn_logo.png" with the actual path to your image file.
+    # Adjust the width as needed to fit nicely next to the title.
+    st.image("cairn_logo.png", width=80) # Example width, adjust as needed
 
 with col2:
-# --- Add your image here ---
-# Use the specific RAW GitHub content URL obtained by clicking "Raw"
-    image_url = "https://raw.githubusercontent.com/CAIRN-Guides/CAIRN/refs/heads/feature/api-ui-refresh/CAIRN_api/CAIRN_BW_Photo_4.13.25.webp"
+    # --- Title goes in the second column ---
+    st.title("CAIRN Document Finder") # Removed the book emoji to avoid crowding
 
-# Display the image using Streamlit
-    st.image(image_url,
-            caption='CAIRN BW Photo', # Optional: Add a caption
-            width=100) # Adjust width as needed
-
-    # Option 2: Use a local file (uncomment the lines below)
-    # Make sure 'cairn_logo.png' is in the same directory as app.py
-    # or provide the correct path e.g., 'images/cairn_logo.png'
-    # try:
-    #     logo = Image.open('cairn_logo.png') # Replace with your image filename/path
-    #     st.image(logo, width=100) # Adjust width as needed
-    # except FileNotFoundError:
-    #     st.warning("Logo image file not found.")
-
-
-# ─── Sidebar filters (Remains unchanged) ─────────────────────────────────────
+# ─── Sidebar filters  ─────────────────────────────────────
 st.sidebar.header("Filters")
 params = {}
 
