@@ -1,5 +1,6 @@
 streamlit
 requests
 pandas
-streamlit-aggrid
 python-dotenv
+Pillow
+streamlit-aggrid
