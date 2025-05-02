@@ -23,7 +23,7 @@ with col1:
     # --- Add your image here ---
     # IMPORTANT: Replace "cairn_logo.png" with the actual path to your image file.
     # Adjust the width as needed to fit nicely next to the title.
-    st.image("cairn_logo.png", width=80) # Example width, adjust as needed
+    st.image("https://raw.githubusercontent.com/CAIRN-Guides/CAIRN/refs/heads/feature/api-ui-refresh/CAIRN_api/CAIRN_BW_Photo_4.13.25.webp", width=80) # Example width, adjust as needed
 
 with col2:
     # --- Title goes in the second column ---
