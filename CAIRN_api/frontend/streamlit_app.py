@@ -16,10 +16,10 @@ API_URL = os.getenv("API_URL", "https://cairn-backend.onrender.com") # Use geten
 st.set_page_config(page_title="CAIRN Finder", layout="wide")
 
 # ─── Title and Logo Area ───────────────────────────────────────────────────────
-col1, col2 = st.columns([4, 1]) # Ratio of width for title vs image
+col2, col1 = st.columns([4, 1]) # Ratio of width for title vs image
 
 with col1:
-    st.title("📚 CAIRN Document Finder")
+    st.title(" CAIRN Document Finder")
 
 with col2:
 # --- Add your image here ---
