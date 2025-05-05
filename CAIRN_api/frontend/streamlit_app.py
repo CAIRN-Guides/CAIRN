@@ -1,7 +1,8 @@
 # frontend/streamlit_app.py
-# Full drop-in replacement code - v1.7 (Grid State Selection)
-# Attempts to get selection from grid_response['grid_state'] instead of selected_rows.
-# Reinstated reload_data=False.
+# Full drop-in replacement code - v1.9 (Remove getRowId)
+# Removes getRowId configuration entirely to rely on default row indexing.
+# Uses selected_rows, simplified update/return modes, reload_data=False removed.
+# Still ensures PK_ID is string in DataFrame for consistency.
 # Includes Basic/Advanced tabs, full About/Tags content.
 # Fixes SyntaxError in download exception handling.
 # Refactors download logic into a reusable function.
@@ -19,7 +20,7 @@ import traceback # For logging detailed errors if needed
 # Make sure AgGrid is installed: pip install streamlit-aggrid
 # Updated import for JsCode location can vary, check st_aggrid docs if needed
 try:
-    from st_aggrid.shared import JsCode
+    from st_aggrid.shared import JsCode # Still needed for potential future use or other JsCode
 except ImportError:
     # Try alternative location if the first one fails (might depend on version)
     try:
@@ -58,20 +59,19 @@ def handle_single_download(doc_pk_id, doc_title, tab_prefix):
     error handling, and displaying the download link via session state.
 
     Args:
-        doc_pk_id: The primary key (database ID) of the document.
+        doc_pk_id: The primary key (database ID) of the document (expected as string).
         doc_title: The title of the document for display purposes.
         tab_prefix: A unique string ('basic' or 'advanced') to namespace keys.
     """
-    # Ensure doc_pk_id is not None or empty before proceeding
-    # Note: PK_ID from Supabase might be integer, ensure comparison/check handles this.
-    if doc_pk_id is None or str(doc_pk_id).strip() == "":
+    # Ensure doc_pk_id is not None or empty string before proceeding
+    if not doc_pk_id or str(doc_pk_id).strip() == "":
         st.warning(f"Cannot generate download link: Selected document is missing its ID (PK_ID={doc_pk_id}).")
         return
 
     button_label = f"⬇️ Download: {doc_title[:40]}..."
-    # Ensure doc_pk_id is string for key generation if it's integer
-    button_key = f"download_single_{tab_prefix}_{str(doc_pk_id)}"
-    link_key = f'download_link_{tab_prefix}_{str(doc_pk_id)}'
+    # PK_ID should be string now
+    button_key = f"download_single_{tab_prefix}_{doc_pk_id}"
+    link_key = f'download_link_{tab_prefix}_{doc_pk_id}'
 
     # Display the download link first if it exists from a previous click/rerun
     if link_key in st.session_state:
@@ -280,13 +280,16 @@ if load_button_pressed:
                          st.session_state.api_error = "Critical Error: 'PK_ID' column contains NULL values. Downloads may fail."
                          st.session_state.data_message = None
                          st.error(st.session_state.api_error)
-                         # Consider filtering null PK_IDs here if appropriate
-                         # df_renamed = df_renamed.dropna(subset=['PK_ID'])
                     else:
-                        # Convert PK_ID to string if it's numeric, for consistent keying later
-                        # Or ensure getRowId handles numeric IDs if they are numeric
-                        # If PK_ID is guaranteed to be int/bigint from DB, this might not be needed
-                        # df_renamed['PK_ID'] = df_renamed['PK_ID'].astype(str)
+                        # Ensure PK_ID is string for reliable JS interaction downstream
+                        try:
+                            df_renamed['PK_ID'] = df_renamed['PK_ID'].astype(str)
+                        except Exception as e:
+                            st.session_state.search_results_df = pd.DataFrame()
+                            st.session_state.api_error = f"Critical Error: Failed to convert PK_ID to string - {e}"
+                            st.session_state.data_message = None
+                            st.error(st.session_state.api_error)
+                            st.stop()
 
                         st.session_state.search_results_df = df_renamed
                         st.session_state.api_error = None
@@ -328,7 +331,8 @@ with search_basic_tab:
 
         cols_to_display_basic = ["PK_ID"] + BASIC_COLUMNS_TO_SHOW
         available_basic_cols = [col for col in cols_to_display_basic if col in st.session_state.search_results_df.columns]
-        df_basic_view = st.session_state.search_results_df[available_basic_cols]
+        # Make a copy to avoid modifying the main session state DataFrame
+        df_basic_view = st.session_state.search_results_df[available_basic_cols].copy()
 
         search_term_basic = st.text_input("🔎 Quick Search basic results", key="quick_search_input_basic")
         df_display_basic = df_basic_view
@@ -344,10 +348,17 @@ with search_basic_tab:
             # --- Pre-AgGrid Check (Basic) ---
             if 'PK_ID' not in df_display_basic.columns:
                 st.error("CRITICAL (Basic): PK_ID column missing in DataFrame sent to AgGrid. Downloads will fail.")
-                # Consider st.stop() if this is fatal
-            elif df_display_basic['PK_ID'].isnull().any():
+                st.stop()
+            if df_display_basic['PK_ID'].isnull().any():
                 st.error("CRITICAL (Basic): PK_ID column contains NULL values in DataFrame sent to AgGrid. Downloads may fail.")
-                # Consider filtering: df_display_basic = df_display_basic.dropna(subset=['PK_ID'])
+                df_display_basic = df_display_basic.dropna(subset=['PK_ID'])
+                if df_display_basic.empty:
+                    st.warning("All rows removed due to missing PK_ID.")
+                    st.stop()
+            # Ensure PK_ID is string here too, just before passing to AgGrid
+            if df_display_basic['PK_ID'].dtype != 'object':
+                 df_display_basic['PK_ID'] = df_display_basic['PK_ID'].astype(str)
+
 
             # Configure AgGrid options
             gb_basic = GridOptionsBuilder.from_dataframe(df_display_basic)
@@ -363,11 +374,9 @@ with search_basic_tab:
             gb_basic.configure_selection(selection_mode="multiple", use_checkbox=True, header_checkbox=True)
             gb_basic.configure_grid_options(domLayout='normal')
 
-            # Build grid options and add getRowId
-            # Ensure the data type returned by getRowId matches the PK_ID column type (e.g., number or string)
-            get_row_id_basic = JsCode("""function(params) { return params.data.PK_ID; }""")
+            # Build grid options WITHOUT getRowId
             grid_opts_basic = gb_basic.build()
-            grid_opts_basic['getRowId'] = get_row_id_basic
+            # grid_opts_basic['getRowId'] = get_row_id_basic # <<< REMOVED
 
             # Display the AgGrid component
             grid_response_basic = AgGrid(
@@ -376,80 +385,55 @@ with search_basic_tab:
                 key='document_grid_basic',
                 height=600, width='100%',
                 columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
-                update_mode=GridUpdateMode.SELECTION_CHANGED,
-                data_return_mode=DataReturnMode.AS_INPUT, # Keep AS_INPUT with getRowId
-                allow_unsafe_jscode=True,
+                # Use simplified update/return modes
+                update_mode=GridUpdateMode.MODEL_CHANGED | GridUpdateMode.SELECTION_CHANGED,
+                data_return_mode=DataReturnMode.FILTERED_AND_SORTED, # Get filtered/sorted data back
+                allow_unsafe_jscode=True, # Still allow for potential future JS
                 enable_enterprise_modules=False,
-                reload_data=False # <<< REINSTATED: Try keeping this with getRowId
+                # reload_data=False # Removed
             )
 
-            # --- NEW Selection Logic using grid_state ---
-            selected_row_ids_basic = []
-            selected_rows_data_basic = [] # To store full row data for details pane
-
-            if grid_response_basic:
-                grid_state = grid_response_basic.get('grid_state')
-                if grid_state and 'selections' in grid_state:
-                    selections = grid_state['selections']
-                    if selections and 'rowIds' in selections:
-                        # rowIds should contain the PK_ID values based on getRowId
-                        selected_row_ids_basic = selections['rowIds']
-
-                        # --- Retrieve full row data for selected IDs ---
-                        if selected_row_ids_basic:
-                             # Ensure IDs from JS match DataFrame index/column type (might need conversion)
-                             try:
-                                 # Attempt conversion to match potential numeric PK_ID type
-                                 match_ids = [int(id_val) for id_val in selected_row_ids_basic]
-                             except ValueError:
-                                 # Fallback if IDs are not purely numeric (shouldn't happen if PK_ID is int)
-                                 match_ids = selected_row_ids_basic
-
-                             # Filter the DataFrame displayed in the grid to get the selected rows
-                             selected_rows_data_basic = df_display_basic[df_display_basic['PK_ID'].isin(match_ids)].to_dict('records')
-
+            # --- Use selected_rows (relying on default indexing now) ---
+            selected_rows_basic = grid_response_basic.get("selected_rows")
 
             # --- Actions Area Below Basic Grid ---
             st.markdown("---")
-            csv_data_basic = df_display_basic.to_csv(index=False).encode('utf-8')
+            # Download the *displayed* data after filtering
+            csv_data_basic = pd.DataFrame(grid_response_basic['data']).to_csv(index=False).encode('utf-8') if grid_response_basic['data'] else "".encode('utf-8')
             st.download_button(
                 label="📄 Download Basic View as CSV",
                 data=csv_data_basic,
                 file_name="cairn_basic_export.csv",
                 mime="text/csv",
-                key='csv_download_basic'
+                key='csv_download_basic',
+                disabled=not grid_response_basic['data'] # Disable if no data displayed
             )
             st.markdown("---")
 
             col_act_basic_1, col_act_basic_2 = st.columns([1, 3])
 
             with col_act_basic_1: # Column for download buttons
-                num_selected = len(selected_row_ids_basic)
-                if num_selected == 1:
-                    # Get the single selected row's data from the list we built
-                    if selected_rows_data_basic:
-                        selected_doc = selected_rows_data_basic[0]
-                        doc_pk_id = selected_doc.get('PK_ID')
+                # Check if selection is valid (should be list of dicts)
+                if selected_rows_basic and isinstance(selected_rows_basic, list):
+                    num_selected = len(selected_rows_basic)
+                    if num_selected == 1:
+                        selected_doc = selected_rows_basic[0]
+                        # Extract PK_ID from the returned row data dictionary
+                        doc_pk_id = selected_doc.get('PK_ID') # Should be string
                         doc_title = selected_doc.get('Document Title', f'File ID {selected_doc.get("File ID", "N/A")}')
                         handle_single_download(doc_pk_id, doc_title, "basic")
-                    else:
-                        # This case indicates an issue retrieving the row data after getting the ID
-                        st.warning("Could not retrieve data for the selected row ID.")
-                        st.caption("Select a single row to enable download.")
-                elif num_selected > 1:
-                    st.button(f"⬇️ Download {num_selected} Selected as ZIP", key="download_selected_zip_basic", disabled=True)
-                    st.caption("(ZIP download not yet implemented)")
-                else: # num_selected == 0
+                    elif num_selected > 1:
+                        st.button(f"⬇️ Download {num_selected} Selected as ZIP", key="download_selected_zip_basic", disabled=True)
+                        st.caption("(ZIP download not yet implemented)")
+                else: # Handles None or empty list
                      st.caption("Select a single row to enable download.")
 
             with col_act_basic_2: # Column for displaying details
-                 # Use the selected_rows_data_basic list we built
-                 if selected_rows_data_basic:
+                 if selected_rows_basic and isinstance(selected_rows_basic, list) and len(selected_rows_basic) > 0:
                      st.markdown("#### Selected Document Details")
                      try:
-                         # Create DataFrame directly from the retrieved row data list
-                         sel_df = pd.DataFrame(selected_rows_data_basic)
-                         # AgGrid internal info won't be present here, no need to drop
+                         # Create DataFrame directly from selected_rows
+                         sel_df = pd.DataFrame(selected_rows_basic).drop(columns=["_selectedRowNodeInfo"], errors="ignore")
                          if len(sel_df) == 1:
                              st.dataframe(sel_df.iloc[0], use_container_width=True)
                          else:
@@ -467,7 +451,9 @@ with search_advanced_tab:
     if 'search_results_df' in st.session_state and not st.session_state.search_results_df.empty:
         st.write(f"Showing **{len(st.session_state.search_results_df)}** of **{st.session_state.total_docs}** total documents (Page {st.session_state.get('current_page_for_display', 1)} of {st.session_state.get('total_pages', 1)})")
 
-        df_advanced_view = st.session_state.search_results_df
+        # Make a copy to avoid modifying the main session state DataFrame
+        df_advanced_view = st.session_state.search_results_df.copy()
+
         search_term_advanced = st.text_input("🔎 Quick Search advanced results", key="quick_search_input_advanced")
         df_display_advanced = df_advanced_view
         if search_term_advanced:
@@ -482,10 +468,16 @@ with search_advanced_tab:
             # --- Pre-AgGrid Check (Advanced) ---
             if 'PK_ID' not in df_display_advanced.columns:
                 st.error("CRITICAL (Advanced): PK_ID column missing in DataFrame sent to AgGrid. Downloads will fail.")
-                # Consider st.stop()
-            elif df_display_advanced['PK_ID'].isnull().any():
+                st.stop()
+            if df_display_advanced['PK_ID'].isnull().any():
                 st.error("CRITICAL (Advanced): PK_ID column contains NULL values in DataFrame sent to AgGrid. Downloads may fail.")
-                # Consider filtering: df_display_advanced = df_display_advanced.dropna(subset=['PK_ID'])
+                df_display_advanced = df_display_advanced.dropna(subset=['PK_ID'])
+                if df_display_advanced.empty:
+                    st.warning("All rows removed due to missing PK_ID.")
+                    st.stop()
+            # Ensure PK_ID is string
+            if df_display_advanced['PK_ID'].dtype != 'object':
+                 df_display_advanced['PK_ID'] = df_display_advanced['PK_ID'].astype(str)
 
             # Configure AgGrid options
             gb_advanced = GridOptionsBuilder.from_dataframe(df_display_advanced)
@@ -507,10 +499,9 @@ with search_advanced_tab:
             gb_advanced.configure_selection(selection_mode="multiple", use_checkbox=True, header_checkbox=True)
             gb_advanced.configure_grid_options(domLayout='normal')
 
-            # Build grid options and add getRowId
-            get_row_id_advanced = JsCode("""function(params) { return params.data.PK_ID; }""")
+            # Build grid options WITHOUT getRowId
             grid_opts_advanced = gb_advanced.build()
-            grid_opts_advanced['getRowId'] = get_row_id_advanced
+            # grid_opts_advanced['getRowId'] = get_row_id_advanced # <<< REMOVED
 
             # Display the AgGrid component
             grid_response_advanced = AgGrid(
@@ -519,68 +510,55 @@ with search_advanced_tab:
                 key='document_grid_advanced',
                 height=600, width='100%',
                 columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
-                update_mode=GridUpdateMode.SELECTION_CHANGED,
-                data_return_mode=DataReturnMode.AS_INPUT, # Keep AS_INPUT with getRowId
-                allow_unsafe_jscode=True,
+                # Use simplified update/return modes
+                update_mode=GridUpdateMode.MODEL_CHANGED | GridUpdateMode.SELECTION_CHANGED,
+                data_return_mode=DataReturnMode.FILTERED_AND_SORTED, # Get filtered/sorted data back
+                allow_unsafe_jscode=True, # Still allow for potential future JS
                 enable_enterprise_modules=False,
-                reload_data=False # <<< REINSTATED: Try keeping this with getRowId
+                # reload_data=False # Removed
             )
 
-            # --- NEW Selection Logic using grid_state ---
-            selected_row_ids_advanced = []
-            selected_rows_data_advanced = [] # To store full row data for details pane
-
-            if grid_response_advanced:
-                grid_state = grid_response_advanced.get('grid_state')
-                if grid_state and 'selections' in grid_state:
-                    selections = grid_state['selections']
-                    if selections and 'rowIds' in selections:
-                        selected_row_ids_advanced = selections['rowIds']
-                        # --- Retrieve full row data for selected IDs ---
-                        if selected_row_ids_advanced:
-                             try:
-                                 match_ids = [int(id_val) for id_val in selected_row_ids_advanced]
-                             except ValueError:
-                                 match_ids = selected_row_ids_advanced
-                             selected_rows_data_advanced = df_display_advanced[df_display_advanced['PK_ID'].isin(match_ids)].to_dict('records')
-
+            # --- Use selected_rows (relying on default indexing now) ---
+            selected_rows_advanced = grid_response_advanced.get("selected_rows")
 
             # --- Actions Area Below Advanced Grid ---
             st.markdown("---")
-            csv_data_advanced = df_display_advanced.to_csv(index=False).encode('utf-8')
+            # Download the *displayed* data after filtering
+            csv_data_advanced = pd.DataFrame(grid_response_advanced['data']).to_csv(index=False).encode('utf-8') if grid_response_advanced['data'] else "".encode('utf-8')
             st.download_button(
                 label="📄 Download Advanced View as CSV",
                 data=csv_data_advanced,
                 file_name="cairn_advanced_export.csv",
                 mime="text/csv",
-                key='csv_download_advanced'
+                key='csv_download_advanced',
+                disabled=not grid_response_advanced['data'] # Disable if no data displayed
             )
             st.markdown("---")
 
             col_act_adv_1, col_act_adv_2 = st.columns([1, 3])
 
             with col_act_adv_1: # Column for download buttons
-                num_selected = len(selected_row_ids_advanced)
-                if num_selected == 1:
-                    if selected_rows_data_advanced:
-                        selected_doc = selected_rows_data_advanced[0]
-                        doc_pk_id = selected_doc.get('PK_ID')
+                # Check if selection is valid
+                if selected_rows_advanced and isinstance(selected_rows_advanced, list):
+                    num_selected = len(selected_rows_advanced)
+                    if num_selected == 1:
+                        selected_doc = selected_rows_advanced[0]
+                        # Extract PK_ID from the returned row data dictionary
+                        doc_pk_id = selected_doc.get('PK_ID') # Should be string
                         doc_title = selected_doc.get('Document Title', f'File ID {selected_doc.get("File ID", "N/A")}')
                         handle_single_download(doc_pk_id, doc_title, "advanced")
-                    else:
-                        st.warning("Could not retrieve data for the selected row ID.")
-                        st.caption("Select a single row to enable download.")
-                elif num_selected > 1:
-                    st.button(f"⬇️ Download {num_selected} Selected as ZIP", key="download_selected_zip_advanced", disabled=True)
-                    st.caption("(ZIP download not yet implemented)")
-                else: # num_selected == 0
+                    elif num_selected > 1:
+                        st.button(f"⬇️ Download {num_selected} Selected as ZIP", key="download_selected_zip_advanced", disabled=True)
+                        st.caption("(ZIP download not yet implemented)")
+                else: # Handles None or empty list
                      st.caption("Select a single row to enable download.")
 
             with col_act_adv_2: # Column for displaying details
-                 if selected_rows_data_advanced:
+                 if selected_rows_advanced and isinstance(selected_rows_advanced, list) and len(selected_rows_advanced) > 0:
                      st.markdown("#### Selected Document Details")
                      try:
-                         sel_df = pd.DataFrame(selected_rows_data_advanced)
+                         # Create DataFrame directly from selected_rows
+                         sel_df = pd.DataFrame(selected_rows_advanced).drop(columns=["_selectedRowNodeInfo"], errors="ignore")
                          if len(sel_df) == 1:
                              st.dataframe(sel_df.iloc[0], use_container_width=True)
                          else:
@@ -662,4 +640,4 @@ with tags_tab:
 
 # Optional Footer
 st.markdown("---")
-st.caption("CAIRN Project v1.7 | Powered by Streamlit")
+st.caption("CAIRN Project v1.9 | Powered by Streamlit")
