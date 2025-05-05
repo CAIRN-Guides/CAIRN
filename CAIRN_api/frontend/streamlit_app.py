@@ -302,11 +302,95 @@ with search_tab:
             reload_data=False # Avoid unnecessary reloads, manage data via session state
         )
 
-        # --- Actions Area Below Grid (Download, Details) ---
+# --- Actions Area Below Grid (Download, Details) ---
         st.markdown("---")
-        selected_rows = grid_response["selected_rows"]
+        # Use .get() for safer access - returns None if key is missing
+        selected_rows = grid_response.get("selected_rows")
 
         col_act_1, col_act_2 = st.columns([1, 3]) # Layout columns for buttons/details
+
+        with col_act_1:
+            # --- Download Button Logic ---
+
+            # Check if selected_rows is a non-None sequence (list) before using len()
+            if selected_rows and isinstance(selected_rows, list):
+                num_selected = len(selected_rows)
+
+                if num_selected == 1:
+                    # --- Single Selection Download Button ---
+                    selected_doc = selected_rows[0]
+                    # Get the original primary key ('id') - Ensure PK_ID mapping is correct if used
+                    doc_pk_id = selected_doc.get('PK_ID') or selected_doc.get('id') # Check both possibilities
+                    doc_title = selected_doc.get('Document Title', f'File ID {selected_doc.get("File ID", doc_pk_id)}')
+
+                    if doc_pk_id:
+                        button_label = f"⬇️ Download: {doc_title[:50]}..."
+                        button_key = f"download_{doc_pk_id}"
+
+                        if st.button(button_label, key=button_key):
+                            download_url_endpoint = f"{API_URL}/documents/{doc_pk_id}/download-url"
+                            try:
+                                with st.spinner(f"Generating secure link for '{doc_title[:30]}...'"):
+                                    dl_resp = requests.get(download_url_endpoint, headers=AUTH_HEADERS, timeout=20)
+                                    dl_resp.raise_for_status()
+                                    download_info = dl_resp.json()
+                                    url = download_info.get("url")
+                                    if url:
+                                        st.session_state[f'download_link_{doc_pk_id}'] = url
+                                    else:
+                                        st.error("Backend did not return a valid download link.")
+                                        if f'download_link_{doc_pk_id}' in st.session_state: del st.session_state[f'download_link_{doc_pk_id}']
+
+                            except requests.exceptions.HTTPError as http_err:
+                                 detail = "Unknown error"
+                                 try: detail = http_err.response.json().get('detail', detail)
+                                 except: pass
+                                 st.error(f"Download Failed ({http_err.response.status_code}): {detail}")
+                                 if f'download_link_{doc_pk_id}' in st.session_state: del st.session_state[f'download_link_{doc_pk_id}']
+                            except requests.exceptions.RequestException as req_err:
+                                st.error(f"Network Error: Could not reach download API. {req_err}")
+                                if f'download_link_{doc_pk_id}' in st.session_state: del st.session_state[f'download_link_{doc_pk_id}']
+                            except Exception as e:
+                                st.error(f"An unexpected error occurred: {e}")
+                                if f'download_link_{doc_pk_id}' in st.session_state: del st.session_state[f'download_link_{doc_pk_id}']
+
+                        # Display the download link generated in this specific button press action
+                        # Check session state for the key associated with this specific button
+                        if st.session_state.get(f'download_link_{doc_pk_id}'):
+                            link = st.session_state.get(f'download_link_{doc_pk_id}')
+                            # Use markdown for a clear link.
+                            st.markdown(f'✅ Link ready: <a href="{link}" target="_blank" download>Click here to download "{doc_title[:50]}..."</a>', unsafe_allow_html=True)
+                            # Remove the link from state after displaying to prevent it showing up on unrelated reruns
+                            del st.session_state[f'download_link_{doc_pk_id}']
+
+
+                elif num_selected > 1:
+                    # --- Multiple Selection Placeholder ---
+                    st.button(f"⬇️ Download {len(selected_rows)} Selected as ZIP", key="download_selected_zip", disabled=True) # Placeholder for future ZIP feature
+                    st.caption("(ZIP download not yet implemented)")
+
+            # --- Download current view as CSV ---
+            # (Keep your existing CSV download logic here)
+            if not df_display.empty: # Use df_display which contains the potentially filtered data
+                csv_data = df_display.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                     label="📄 Download Current View as CSV",
+                     data=csv_data,
+                     file_name="cairn_documents_export.csv",
+                     mime="text/csv",
+                     key='csv_download_view' # Ensure key is unique if multiple download buttons exist
+                )
+
+        with col_act_2:
+            # --- Detail pane for selected rows ---
+             # Also check if selected_rows is valid here before proceeding
+             if selected_rows and isinstance(selected_rows, list) and len(selected_rows) > 0:
+                 st.markdown("#### Selected Document Details")
+                 sel_df = pd.DataFrame(selected_rows).drop(columns=["_selectedRowNodeInfo"], errors="ignore")
+                 if len(sel_df) == 1:
+                     st.dataframe(sel_df.iloc[0], use_container_width=True)
+                 else:
+                     st.dataframe(sel_df, use_container_width=True, height=200)
 
         with col_act_1:
             # --- Download Button for Single Selection ---
