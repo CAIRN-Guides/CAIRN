@@ -346,16 +346,6 @@ async def batch_download_url(
         logging.exception(f"Error uploading ZIP file to B2: {e}")
         raise HTTPException(status_code=500, detail="Failed to store generated ZIP file")
 
-    suggested_name = f"cairn_documents_{added}_files.zip"
-    logging.info(f"Batch ZIP ready: {suggested_name}, contains {added} files, had {len(errors)} errors")
-    
-    return {
-        "url": zip_url,
-        "filename": suggested_name,
-        "expires_in_seconds": ZIP_URL_TTL_SECONDS
-    }
-
-# For local testing
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    suggested_name = f"cairn_{added}_files.zip"
+    logging.info(f"Batch ZIP ready: {suggested_name}, errors: {errors}")
+    return {"url": final_url, "filename": suggested_name, "expires_in_seconds": ZIP_URL_TTL_SECONDS}
