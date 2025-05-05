@@ -253,21 +253,22 @@ async def single_download_url(
 @app.get("/api/b2-proxy/{file_id}/{filename}")
 async def proxy_b2_download(file_id: str, filename: str):
     """
-    Proxy B2 downloads through our server.
-    This lets us include the auth token without exposing it to the frontend.
+    Proxy B2 downloads through our server by streaming the content.
+    This allows us to include auth headers without exposing them to the client.
     """
     try:
         download_url = f"{DOWNLOAD_URL_BASE}/b2api/v1/b2_download_file_by_id?fileId={file_id}"
         headers = {"Authorization": b2_api.account_info.get_account_auth_token()}
         
-        # Stream the response to avoid loading entire file into memory
+        # Make the request with auth headers
         response = requests.get(download_url, headers=headers, stream=True)
         response.raise_for_status()
         
-        # Set appropriate headers for file download
+        # Get content info
         content_type = response.headers.get("Content-Type", "application/octet-stream")
         content_length = response.headers.get("Content-Length")
         
+        # Prepare response headers
         headers = {
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Content-Type": content_type,
@@ -275,11 +276,15 @@ async def proxy_b2_download(file_id: str, filename: str):
         if content_length:
             headers["Content-Length"] = content_length
             
-        # Return a streaming response
-        return JSONResponse(
-            content={"status": "success", "download_url": download_url},
-            headers={"Location": download_url},
-            status_code=302  # Redirect
+        # Stream the content directly to the client
+        def iter_content():
+            for chunk in response.iter_content(chunk_size=8192):
+                yield chunk
+                
+        return StreamingResponse(
+            iter_content(),
+            headers=headers,
+            media_type=content_type
         )
         
     except Exception as e:
