@@ -106,7 +106,12 @@ def sanitize_filename(name: str, max_length: int = 100) -> str:
     return clean or "file"
 
 def b2_get_download_url(file_id: str, ttl: int = 3600) -> Optional[str]:
-#test challenges to download helper
+    """
+    Generates a presigned URL for a B2 file ID by:
+      1) getting the base download-by-id URL from the session
+      2) requesting a short‑lived auth token from the raw API (with correct signature)
+      3) stitching them together
+    """
     if not file_id:
         logging.warning("Empty b2_file_id in b2_get_download_url")
         return None
@@ -115,27 +120,19 @@ def b2_get_download_url(file_id: str, ttl: int = 3600) -> Optional[str]:
         # 1) Base download URL (no token yet)
         base_download_url = b2_api.session.get_download_url_by_id(file_id)
 
-        # 2) Get the download authorization token (snake_case args!)
-        try:
-            auth_info = b2_api.raw_api.get_download_authorization(
-                bucket_id=bucket.id_,
-                file_name_prefix="",
-                valid_duration_in_seconds=ttl,
-            )
-        except (AttributeError, TypeError):
-            # fallback method name
-            auth_info = b2_api.raw_api.b2_get_download_authorization(
-                bucket_id=bucket.id_,
-                file_name_prefix="",
-                valid_duration_in_seconds=ttl,
-            )
+        # 2) Fetch the auth token using the exact positional args API expects:
+        api_url = b2_api.raw_api.api_url
+        acct_token = b2_api.raw_api.account_auth_token
+        auth_info = b2_api.raw_api.get_download_authorization(
+            api_url,
+            acct_token,
+            bucket.id_,   # your bucket ID
+            "",           # file_name_prefix (empty = this exact file)
+            ttl           # valid_duration_in_seconds
+        )
+        token = auth_info["authorizationToken"]
 
-        token = auth_info.get("authorizationToken")
-        if not token:
-            logging.error(f"No token in auth_info: {auth_info!r}")
-            return None
-
-        # 3) Stitch it together
+        # 3) Return the full presigned URL
         return f"{base_download_url}?Authorization={token}"
 
     except b2_exceptions.B2Error as e:
