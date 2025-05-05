@@ -12,7 +12,7 @@ from urllib.parse import quote_plus, urljoin
 import requests
 from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse  
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from supabase import create_client, Client
