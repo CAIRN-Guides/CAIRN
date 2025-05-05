@@ -14,7 +14,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from b2sdk.v2 import B2Api, InMemoryAccountInfo, Bucket, exception as b2_exceptions
+# Ensure correct imports from b2sdk v2
+from b2sdk.v2 import B2Api, InMemoryAccountInfo, Bucket, FileInfo
+from b2sdk.v2 import exception as b2_exceptions
 
 # ─── Load environment ──────────────────────────────────────────────────────────
 load_dotenv() # loads backend/.env
@@ -118,7 +120,7 @@ if not ALLOWED_ORIGINS:
 
 app = FastAPI(
     title="CAIRN Document Finder API",
-    version="1.3", # Incremented version
+    version="1.4", # Incremented version
     description="Search & retrieve document metadata. Provides endpoints for generating B2 download URLs (single and batch ZIP)."
 )
 
@@ -132,9 +134,9 @@ app.add_middleware(
 
 # ─── Helper Functions ─────────────────────────────────────────────────────────
 
-# --- Corrected Helper Function v2 ---
+# --- Corrected Helper Function v3 ---
 def b2_get_download_url(file_id: str, ttl: int = 3600) -> Optional[str]:
-    """Generates a presigned download URL for a B2 file ID using download authorization."""
+    """Generates a presigned download URL for a B2 file ID using the bucket method."""
     if not file_id:
         logging.warning("b2_get_download_url called with empty file_id")
         return None
@@ -147,35 +149,35 @@ def b2_get_download_url(file_id: str, ttl: int = 3600) -> Optional[str]:
              logging.error("B2 Bucket object is not initialized correctly.")
              return None
 
-        # --- FIX: Use get_download_authorization ---
-        # 1. Get the base download URL (without token)
-        # This uses the B2 API session which should be authorized
-        base_download_url = _b2.session.get_download_url_by_id(file_id)
+        # --- FIX: Use bucket.get_download_url with duration_seconds ---
+        # 1. Get file info (including the filename) from the file ID using the B2Api instance
+        file_info: FileInfo = _b2.get_file_info_by_id(file_id)
+        file_name = file_info.file_name # Get the actual filename stored in B2
 
-        # 2. Get a download authorization token for the bucket with the desired TTL
-        authorization_info = _b2.get_download_authorization(
-            bucket_id=bucket.id_, # Use the bucket ID obtained earlier
-            file_name_prefix='', # Authorize for any file in the bucket (or restrict if needed)
-            valid_duration_in_seconds=ttl,
-            b2_file_name=None # Not needed when using file ID URL base
+        # 2. Generate the download URL using the bucket object, filename, and duration
+        # Ensure the ttl variable (integer seconds) is passed to duration_seconds
+        url = bucket.get_download_url(
+            file_name=file_name,
+            duration_seconds=ttl
         )
-        auth_token = authorization_info['authorizationToken']
-
-        # 3. Construct the final URL
-        final_url = f"{base_download_url}?Authorization={auth_token}"
         # --- End Fix ---
 
-        logging.info(f"Successfully generated URL for b2_file_id: {file_id}")
-        return final_url
+        logging.info(f"Successfully generated URL for b2_file_id: {file_id} (filename: {file_name})")
+        return url
 
     except b2_exceptions.FileNotPresent as fnfe:
         # Specific error if the file ID doesn't exist in B2
         logging.error(f"[B2 SDK Error] File not present for file_id {file_id}: {fnfe}")
         return None
+    except b2_exceptions.NonExistentBucket as neb:
+        logging.error(f"[B2 SDK Error] Bucket '{B2_BUCKET_NAME}' not found: {neb}")
+        # This indicates a fundamental setup issue
+        return None
     except b2_exceptions.B2Error as b2e:
-        logging.error(f"[B2 SDK Error] Presign URL error for {file_id}: {b2e}")
+        logging.error(f"[B2 SDK Error] Presign URL error for {file_id} (filename: {file_name if 'file_name' in locals() else 'unknown'}): {b2e}")
         return None
     except Exception as e:
+        # Catch potential errors from get_file_info_by_id as well
         logging.exception(f"[Unexpected Error] Presign URL failed for {file_id}: {e}")
         return None
 
@@ -450,7 +452,7 @@ async def get_batch_download_url(
 
             # Download the file content
             try:
-                response = requests.get(individual_url, stream=True, timeout=30)
+                response = requests.get(individual_url, stream=False, timeout=30) # Changed stream=False to get content directly
                 response.raise_for_status()
 
                 # Sanitize filename for ZIP entry
@@ -464,7 +466,7 @@ async def get_batch_download_url(
                 zip_entry_name = f"{base_name}{extension}"
 
                 # Write content to ZIP
-                zip_file.writestr(zip_entry_name, response.content)
+                zip_file.writestr(zip_entry_name, response.content) # Use response.content
                 files_added_count += 1
                 logging.info(f"Added PK {pk_id} ('{zip_entry_name}') to ZIP.")
 
