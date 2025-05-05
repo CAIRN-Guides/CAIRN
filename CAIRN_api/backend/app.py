@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from b2sdk.v2 import B2Api, InMemoryAccountInfo, Bucket
 from b2sdk.v2 import exception as b2_exceptions
-
+from fastapi import FastAPI, HTTPException, Query, Depends, Request
 # ─── Load environment ──────────────────────────────────────────────────────────
 load_dotenv()
 
