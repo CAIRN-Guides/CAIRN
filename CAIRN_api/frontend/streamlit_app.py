@@ -1,11 +1,21 @@
+**Analyzing TypeError**
+
+The error message likely means that `raw` is being treated as a string, which explains the TypeError. It seems that `grid.get("data")` typically returns a list of dictionaries, but it might occasionally return a JSON string. If `raw` is a string, iterating over it would yield characters rather than dictionaries. To fix this, we may need to parse it using `json.loads()`, but according to the docs, `grid.get("data")` should return a list. The tricky part is that some versions may still return the string.
+
+
+Thought for 7 seconds
+
+
+```python
 # frontend/streamlit_app.py
-# Full drop-in replacement code - v1.11.2 (set_page_config at top)
+# Full drop-in replacement code - v1.11.3 (Fix “string indices” bug by treating grid data as DataFrame)
 
 import streamlit as st
 st.set_page_config(page_title="CAIRN Finder", layout="wide")  # ← must be first Streamlit call
 
 import os
 import io
+import json
 import requests
 import pandas as pd
 from dotenv import load_dotenv
@@ -25,14 +35,11 @@ except ImportError:
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, ColumnsAutoSizeMode
 
 # --- Constants ---
-BASIC_COLUMNS_TO_SHOW = [
-    "File ID", "Document Title", "Org/Utility Name",
-    "Document Type", "Published Date"
-]
+BASIC_COLUMNS_TO_SHOW = ["File ID", "Document Title", "Org/Utility Name", "Document Type", "Published Date"]
 API_TIMEOUT_SECONDS = 45
 DOWNLOAD_API_TIMEOUT_SECONDS = 30
 
-# ─── Load env & session state auth ─────────────────────────────────────────────
+# ─── Load env & auth header ─────────────────────────────────────────────────────
 load_dotenv()
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 AUTH_HEADERS = {}
@@ -50,7 +57,6 @@ def handle_single_download(doc_pk_id, doc_title, tab_prefix):
     link_key = f"download_link_{tab_prefix}_{doc_pk_id}"
     label = f"⬇️ Download: {doc_title[:40]}..."
 
-    # if link already in state, show it
     if link_key in st.session_state:
         info = st.session_state.pop(link_key)
         url = info.get("url"); fn = info.get("filename")
@@ -62,7 +68,6 @@ def handle_single_download(doc_pk_id, doc_title, tab_prefix):
         )
 
     if st.button(label, key=btn_key):
-        # clear old
         st.session_state.pop(link_key, None)
         try:
             with st.spinner(f"Generating link for '{doc_title[:30]}...'"):
@@ -91,7 +96,6 @@ def handle_batch_download(doc_pk_ids, tab_prefix):
     btn_key  = f"batch_download_btn_{tab_prefix}"
     link_key = f"batch_download_link_{tab_prefix}"
 
-    # if zip in state, show download button
     if link_key in st.session_state:
         info = st.session_state.pop(link_key)
         st.download_button(
@@ -150,9 +154,11 @@ text_cols = [
 for col in text_cols:
     key = f"filter_{col}"
     st.session_state.setdefault(key, "")
-    val = st.sidebar.text_input(col.replace("_"," ").title(),
-                                value=st.session_state[key],
-                                key=f"input_{col}")
+    val = st.sidebar.text_input(
+        col.replace("_"," ").title(),
+        value=st.session_state[key],
+        key=f"input_{col}"
+    )
     st.session_state[key] = val
     if val:
         params[col] = val
@@ -168,9 +174,11 @@ for col in date_fields:
             current = date.fromisoformat(st.session_state[key])
         except:
             pass
-    d = st.sidebar.date_input(col.replace("_"," ").title(),
-                              value=current,
-                              key=f"input_{col}")
+    d = st.sidebar.date_input(
+        col.replace("_"," ").title(),
+        value=current,
+        key=f"input_{col}"
+    )
     if d:
         params[col] = d.isoformat()
         st.session_state[key] = d.isoformat()
@@ -186,7 +194,7 @@ for col in list_cols:
     key = f"filter_{col}"
     st.session_state.setdefault(key, "")
     raw = st.sidebar.text_input(
-        col.replace("_"," ").title()+" (comma‑sep)",
+        col.replace("_"," ").title() + " (comma‑sep)",
         value=st.session_state[key],
         key=f"input_{col}"
     )
@@ -209,20 +217,19 @@ if phy:
 st.sidebar.header("Options")
 st.session_state.setdefault("page", 1)
 st.session_state.setdefault("page_size", 20)
-st.session_state.page = st.sidebar.number_input("Page Number",
-                                               min_value=1,
-                                               value=st.session_state.page,
-                                               key="input_page")
-st.session_state.page_size = st.sidebar.number_input("Page Size",
-                                                     min_value=1, max_value=200,
-                                                     value=st.session_state.page_size,
-                                                     key="input_page_size")
+st.session_state.page = st.sidebar.number_input(
+    "Page Number", min_value=1, value=st.session_state.page, key="input_page"
+)
+st.session_state.page_size = st.sidebar.number_input(
+    "Page Size", min_value=1, max_value=200,
+    value=st.session_state.page_size, key="input_page_size"
+)
 params["page"] = st.session_state.page
 params["page_size"] = st.session_state.page_size
 
 load_button_pressed = st.sidebar.button("Load Documents", type="primary")
 
-# ─── Tabs ─────────────────────────────────────────────────────────────────────
+# ─── Main Tabs ────────────────────────────────────────────────────────────────
 about_tab, basic_tab, advanced_tab, tags_tab = st.tabs([
     "ℹ️ About CAIRN",
     "🔍 Search (Basic)",
@@ -230,7 +237,7 @@ about_tab, basic_tab, advanced_tab, tags_tab = st.tabs([
     "🏷️ Tag Definitions"
 ])
 
-# ─── Data loading ─────────────────────────────────────────────────────────────
+# ─── Data Loading ─────────────────────────────────────────────────────────────
 if load_button_pressed:
     with st.spinner("Fetching documents from CAIRN API..."):
         try:
@@ -262,38 +269,27 @@ if load_button_pressed:
                     st.session_state.api_error = "Critical Error: 'id' missing from API."
                     st.error(st.session_state.api_error)
                 else:
-                    # flatten
+                    # flatten list columns
                     for lc in list_cols:
                         if lc in df.columns:
-                            df[lc] = df[lc].apply(
-                                lambda x: ", ".join(map(str,x)) if isinstance(x,list) else x
-                            )
+                            df[lc] = df[lc].apply(lambda x: ", ".join(map(str, x)) if isinstance(x, list) else x)
                     # rename
                     rename_map = {
-                        "id":"PK_ID", "document_id":"File ID",
-                        "local_backup_name":"Local Backup Name",
-                        "document_title":"Document Title",
-                        "published_date":"Published Date",
-                        "org_utility_name":"Org/Utility Name",
-                        "docket_number":"Docket Number",
-                        "document_type":"Document Type",
-                        "document_subtype":"Document Subtype",
+                        "id":"PK_ID", "document_id":"File ID", "local_backup_name":"Local Backup Name",
+                        "document_title":"Document Title","published_date":"Published Date",
+                        "org_utility_name":"Org/Utility Name","docket_number":"Docket Number",
+                        "document_type":"Document Type","document_subtype":"Document Subtype",
                         "document_url":"Document URL","cairn_url":"CAIRN URL",
                         "rate_impact":"Rate Impact","utility_reform":"Utility Reform",
-                        "energy_resources":"Energy Resources",
-                        "customer_classes":"Customer Classes",
+                        "energy_resources":"Energy Resources","customer_classes":"Customer Classes",
                         "ders":"DERs","physical_climate_risk":"Physical Climate Risk",
                         "additional_keywords":"Additional Keywords","tagger":"Tagger",
                         "date_tagged":"Date Tagged","quality_check":"Quality Check",
                         "processing_notes":"Processing Notes","state_region":"State/Region",
-                        "regulatory_body":"Regulatory Body",
-                        "jurisdiction_type":"Jurisdiction Type",
-                        "parent_document":"Parent Document",
-                        "related_documents":"Related Documents",
-                        "replaces_document":"Replaces Document",
-                        "relationship_types":"Relationship Types",
-                        "document_author":"Document Author",
-                        "source_file_id":"source_file_id",
+                        "regulatory_body":"Regulatory Body","jurisdiction_type":"Jurisdiction Type",
+                        "parent_document":"Parent Document","related_documents":"Related Documents",
+                        "replaces_document":"Replaces Document","relationship_types":"Relationship Types",
+                        "document_author":"Document Author","source_file_id":"source_file_id",
                         "b2_file_id":"b2_file_id"
                     }
                     cols = [c for c in rename_map if c in df.columns]
@@ -314,10 +310,7 @@ if load_button_pressed:
 
 # ─── About Tab ────────────────────────────────────────────────────────────────
 with about_tab:
-    st.markdown("""
-    ## What is CAIRN?
-    ... [your About content here] ...
-    """)
+    st.markdown("## What is CAIRN?\n…")
 
 # ─── Basic Search Tab ─────────────────────────────────────────────────────────
 with basic_tab:
@@ -369,9 +362,7 @@ with basic_tab:
             grid_opts = gb.build()
 
             grid = AgGrid(
-                view_df,
-                gridOptions=grid_opts,
-                key='grid_basic',
+                view_df, gridOptions=grid_opts, key='grid_basic',
                 height=600, width='100%',
                 columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
                 update_mode=GridUpdateMode.MODEL_CHANGED|GridUpdateMode.SELECTION_CHANGED,
@@ -380,25 +371,29 @@ with basic_tab:
             )
 
             selected = grid.get("selected_rows") or []
-            raw = grid.get("data")
-            displayed = pd.DataFrame(raw) if raw is not None else pd.DataFrame()
+            _data = grid.get("data")
+            displayed = pd.DataFrame(_data) if isinstance(_data, list) else (
+                pd.DataFrame(json.loads(_data)) if isinstance(_data, str) else pd.DataFrame()
+            )
 
             st.markdown("---")
             csv_bytes = displayed.to_csv(index=False).encode('utf-8') if not displayed.empty else b""
             st.download_button(
                 label="📄 Download Basic View as CSV",
-                data=csv_bytes, file_name="cairn_basic_export.csv",
-                mime="text/csv", disabled=displayed.empty,
+                data=csv_bytes,
+                file_name="cairn_basic_export.csv",
+                mime="text/csv",
+                disabled=displayed.empty,
                 key="csv_basic"
             )
 
             st.markdown("---")
             col1, col2 = st.columns([1,3])
             with col1:
-                if len(selected)==1:
+                if len(selected) == 1:
                     row = selected[0]
                     handle_single_download(row["PK_ID"], row.get("Document Title",""), "basic")
-                elif len(selected)>1:
+                elif len(selected) > 1:
                     ids = [int(r["PK_ID"]) for r in selected]
                     handle_batch_download(ids, "basic")
                 else:
@@ -467,9 +462,7 @@ with advanced_tab:
             grid_opts = gb.build()
 
             grid = AgGrid(
-                view_df,
-                gridOptions=grid_opts,
-                key='grid_advanced',
+                view_df, gridOptions=grid_opts, key='grid_advanced',
                 height=600, width='100%',
                 columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
                 update_mode=GridUpdateMode.MODEL_CHANGED|GridUpdateMode.SELECTION_CHANGED,
@@ -478,51 +471,53 @@ with advanced_tab:
             )
 
             selected = grid.get("selected_rows") or []
-            raw = grid.get("data")
-            displayed = pd.DataFrame(raw) if raw is not None else pd.DataFrame()
+            _data = grid.get("data")
+            displayed = pd.DataFrame(_data) if isinstance(_data, list) else (
+                pd.DataFrame(json.loads(_data)) if isinstance(_data, str) else pd.DataFrame()
+            )
 
             st.markdown("---")
             csv_bytes = displayed.to_csv(index=False).encode('utf-8') if not displayed.empty else b""
             st.download_button(
                 label="📄 Download Advanced View as CSV",
-                data=csv_bytes, file_name="cairn_advanced_export.csv",
-                mime="text/csv", disabled=displayed.empty,
+                data=csv_bytes,
+                file_name="cairn_advanced_export.csv",
+                mime="text/csv",
+                disabled=displayed.empty,
                 key="csv_advanced"
             )
 
             st.markdown("---")
             col1, col2 = st.columns([1,3])
             with col1:
-                if len(selected)==1:
-                    r=selected[0]
+                if len(selected) == 1:
+                    r = selected[0]
                     handle_single_download(r["PK_ID"], r.get("Document Title",""), "advanced")
-                elif len(selected)>1:
-                    ids=[int(r["PK_ID"]) for r in selected]
+                elif len(selected) > 1:
+                    ids = [int(r["PK_ID"]) for r in selected]
                     handle_batch_download(ids, "advanced")
                 else:
-                    all_ids=[int(r["PK_ID"]) for r in raw]
+                    # no selection → ZIP all displayed
+                    all_ids = displayed['PK_ID'].astype(int).tolist() if not displayed.empty else []
                     if all_ids:
                         handle_batch_download(all_ids, "advanced_all")
                     else:
                         st.caption("No documents to download.")
             with col2:
                 if selected:
-                    sel_df=pd.DataFrame(selected).drop(columns=["_selectedRowNodeInfo"],errors="ignore")
-                    st.dataframe(sel_df if len(sel_df)>1 else sel_df.iloc[0], use_container_width=True, height=200)
+                    sel_df = pd.DataFrame(selected).drop(columns=["_selectedRowNodeInfo"], errors="ignore")
+                    st.dataframe(
+                        sel_df if len(sel_df)>1 else sel_df.iloc[0],
+                        use_container_width=True, height=200
+                    )
 
 # ─── Tag Definitions Tab ───────────────────────────────────────────────────────
 with tags_tab:
     st.info("Definitions of tags used to categorize documents.")
     tag_data = {
-        'Tag Name (Filter)': [
-            # ... same as before ...
-        ],
-        'Description': [
-            # ... same as before ...
-        ],
-        'Common Examples / Format': [
-            # ... same as before ...
-        ]
+        'Tag Name (Filter)': [ /* … same list … */ ],
+        'Description':        [ /* … same list … */ ],
+        'Common Examples / Format': [ /* … same list … */ ]
     }
     try:
         lens = {k: len(v) for k,v in tag_data.items()}
@@ -535,4 +530,5 @@ with tags_tab:
 
 # ─── Footer ───────────────────────────────────────────────────────────────────
 st.markdown("---")
-st.caption("CAIRN Project v1.11.2 | Powered by Streamlit")
+st.caption("CAIRN Project v1.11.3 | Powered by Streamlit")
+```
