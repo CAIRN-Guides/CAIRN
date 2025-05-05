@@ -6,17 +6,17 @@ import uuid
 import re
 import zipfile
 import logging
-from typing import List, Optional, Any, Dict, Union
-from urllib.parse import quote_plus
+from typing import List, Optional, Any, Dict
+from urllib.parse import quote_plus, urljoin
 
 import requests
 from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from b2sdk.v2 import B2Api, InMemoryAccountInfo, Bucket, FileInfo
+from b2sdk.v2 import B2Api, InMemoryAccountInfo, Bucket
 from b2sdk.v2 import exception as b2_exceptions
 
 # ─── Load environment ──────────────────────────────────────────────────────────
@@ -46,8 +46,7 @@ try:
     bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
     
     # Store some important info we'll need later
-    DOWNLOAD_URL_BASE = _info.get_download_url()
-    AUTH_TOKEN = b2_api.account_info.get_account_auth_token()
+    DOWNLOAD_URL_BASE = _info.get_download_url().rstrip("/")
     
     logging.info("✅ Supabase and B2 clients initialized successfully.")
     logging.info(f"Using B2 download base: {DOWNLOAD_URL_BASE}")
@@ -115,28 +114,31 @@ def sanitize_filename(name: str, max_length: int = 100) -> str:
 def b2_get_download_url(file_id: str, ttl_seconds: int = 3600) -> Optional[str]:
     """
     Generate a direct download URL for a B2 file ID.
-    Uses the public download endpoint with authentication.
+    Uses the file_id directly to generate a URL that works with the B2 API.
     """
     if not file_id:
         logging.warning("Empty file_id in b2_get_download_url")
         return None
     
     try:
-        # Get file information from B2
-        file_info = bucket.get_file_info_by_id(file_id)
+        # Simple approach - directly build a URL to download by ID
+        download_url = f"{DOWNLOAD_URL_BASE}/b2api/v1/b2_download_file_by_id?fileId={file_id}"
         
-        # Generate a direct download URL - this is the reliable method
-        # instead of trying to use authorization tokens
-        download_url = f"{DOWNLOAD_URL_BASE}/file/{B2_BUCKET_NAME}/{file_info.file_name}"
+        # Include the Auth token in the header when we make the request
+        headers = {"Authorization": b2_api.account_info.get_account_auth_token()}
         
         logging.info(f"Generated direct download URL for file {file_id}")
+        
+        # Test the URL by making a HEAD request
+        response = requests.head(download_url, headers=headers, timeout=5)
+        if response.status_code not in (200, 302):
+            logging.warning(f"Download URL test failed with status {response.status_code}")
+            return None
+            
         return download_url
         
-    except b2_exceptions.B2Error as e:
-        logging.error(f"[B2Error] getting download URL for {file_id}: {e}")
-        return None
     except Exception as e:
-        logging.exception(f"[Unexpected] b2_get_download_url failed for {file_id}: {e}")
+        logging.exception(f"Failed to generate download URL for {file_id}: {e}")
         return None
 
 async def get_current_user(token: Optional[str] = None):
@@ -225,13 +227,64 @@ async def single_download_url(
         base = name
     filename = f"{base}{ext}"
 
-    # Generate download URL
-    url = b2_get_download_url(b2_id, ttl_seconds=300)
-    if not url:
-        logging.error(f"Could not generate URL for PK {doc_pk}")
+    # Try to use the file ID to download directly
+    # With B2, this requires the auth token in the headers
+    try:
+        # Get a direct download URL with token in headers
+        download_url = f"{DOWNLOAD_URL_BASE}/b2api/v1/b2_download_file_by_id?fileId={b2_id}"
+        auth_token = b2_api.account_info.get_account_auth_token()
+        
+        # Create a special download endpoint to proxy the request through our server
+        # This avoids exposing the auth token to the frontend
+        proxy_url = f"/api/b2-proxy/{b2_id}/{filename}"
+        logging.info(f"Created proxy URL for file {b2_id}")
+        
+        return {
+            "url": proxy_url,
+            "filename": filename,
+            "expires_in_seconds": 300
+        }
+        
+    except Exception as e:
+        logging.exception(f"Error generating download URL for {b2_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate download link")
 
-    return {"url": url, "filename": filename, "expires_in_seconds": 300}
+# New endpoint to proxy B2 downloads
+@app.get("/api/b2-proxy/{file_id}/{filename}")
+async def proxy_b2_download(file_id: str, filename: str):
+    """
+    Proxy B2 downloads through our server.
+    This lets us include the auth token without exposing it to the frontend.
+    """
+    try:
+        download_url = f"{DOWNLOAD_URL_BASE}/b2api/v1/b2_download_file_by_id?fileId={file_id}"
+        headers = {"Authorization": b2_api.account_info.get_account_auth_token()}
+        
+        # Stream the response to avoid loading entire file into memory
+        response = requests.get(download_url, headers=headers, stream=True)
+        response.raise_for_status()
+        
+        # Set appropriate headers for file download
+        content_type = response.headers.get("Content-Type", "application/octet-stream")
+        content_length = response.headers.get("Content-Length")
+        
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Type": content_type,
+        }
+        if content_length:
+            headers["Content-Length"] = content_length
+            
+        # Return a streaming response
+        return JSONResponse(
+            content={"status": "success", "download_url": download_url},
+            headers={"Location": download_url},
+            status_code=302  # Redirect
+        )
+        
+    except Exception as e:
+        logging.exception(f"Error proxying download for {file_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to download file")
 
 @app.post("/documents/batch-download-url", response_model=BatchDownloadResponse, tags=["Download"])
 async def batch_download_url(
@@ -301,17 +354,14 @@ async def batch_download_url(
                 entry_base = n
             entry_name = f"{entry_base}{ext}"
 
-            # Get download URL
-            url = b2_get_download_url(fid, ttl_seconds=120)
-            if not url:
-                logging.error(f"Couldn't get download URL for PK {pk}")
-                errors.append(pk)
-                continue
+            # Direct download with authentication
+            download_url = f"{DOWNLOAD_URL_BASE}/b2api/v1/b2_download_file_by_id?fileId={fid}"
+            headers = {"Authorization": b2_api.account_info.get_account_auth_token()}
 
             # Download file and add to ZIP
             try:
-                response = requests.get(url, timeout=30)
-                response.raise_for_status()  # Will raise exception for 4XX/5XX responses
+                response = requests.get(download_url, headers=headers, timeout=30)
+                response.raise_for_status()
                 
                 z.writestr(entry_name, response.content)
                 added += 1
@@ -337,15 +387,23 @@ async def batch_download_url(
         )
         zip_file_id = file_info.id_
         
-        # Generate download URL for the ZIP
-        zip_url = b2_get_download_url(zip_file_id, ttl_seconds=ZIP_URL_TTL_SECONDS)
-        if not zip_url:
-            raise Exception("Failed to generate download URL for ZIP file")
-            
+        # Create a proxy URL for the ZIP download
+        proxy_url = f"/api/b2-proxy/{zip_file_id}/cairn_documents_{added}_files.zip"
+        
     except Exception as e:
         logging.exception(f"Error uploading ZIP file to B2: {e}")
         raise HTTPException(status_code=500, detail="Failed to store generated ZIP file")
 
-    suggested_name = f"cairn_{added}_files.zip"
-    logging.info(f"Batch ZIP ready: {suggested_name}, errors: {errors}")
-    return {"url": final_url, "filename": suggested_name, "expires_in_seconds": ZIP_URL_TTL_SECONDS}
+    suggested_name = f"cairn_documents_{added}_files.zip"
+    logging.info(f"Batch ZIP ready: {suggested_name}, contains {added} files, had {len(errors)} errors")
+    
+    return {
+        "url": proxy_url,
+        "filename": suggested_name,
+        "expires_in_seconds": ZIP_URL_TTL_SECONDS
+    }
+
+# For local testing
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
