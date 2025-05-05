@@ -106,43 +106,40 @@ def sanitize_filename(name: str, max_length: int = 100) -> str:
     return clean or "file"
 
 def b2_get_download_url(file_id: str, ttl: int = 3600) -> Optional[str]:
-    """
-    Generate a presigned download URL for a B2 file ID by calling the
-    raw get_download_authorization endpoint and stitching together the URL.
-    """
+#test challenges to download helper
     if not file_id:
         logging.warning("Empty b2_file_id in b2_get_download_url")
         return None
-    try:
-        # 1. Base download host, e.g. "https://f005.backblazeb2.com"
-        download_host = _info.get_download_url().rstrip("/")
 
-        # 2. Request a limited-time download authorization token
+    try:
+        # 1) Base download URL (no token yet)
+        base_download_url = b2_api.session.get_download_url_by_id(file_id)
+
+        # 2) Get the download authorization token (snake_case args!)
         try:
             auth_info = b2_api.raw_api.get_download_authorization(
-                bucketId=bucket.id_,
-                fileNamePrefix="",
-                validDurationInSeconds=ttl,
+                bucket_id=bucket.id_,
+                file_name_prefix="",
+                valid_duration_in_seconds=ttl,
             )
-        except AttributeError:
-            # some versions call it b2_get_download_authorization
+        except (AttributeError, TypeError):
+            # fallback method name
             auth_info = b2_api.raw_api.b2_get_download_authorization(
-                bucketId=bucket.id_,
-                fileNamePrefix="",
-                validDurationInSeconds=ttl,
+                bucket_id=bucket.id_,
+                file_name_prefix="",
+                valid_duration_in_seconds=ttl,
             )
 
-        token = auth_info["authorizationToken"]
-        # 3. Construct a URL to download by file ID
-        url = (
-            f"{download_host}/b2api/v2/b2_download_file_by_id"
-            f"?fileId={quote_plus(file_id)}"
-            f"&Authorization={quote_plus(token)}"
-        )
-        return url
+        token = auth_info.get("authorizationToken")
+        if not token:
+            logging.error(f"No token in auth_info: {auth_info!r}")
+            return None
+
+        # 3) Stitch it together
+        return f"{base_download_url}?Authorization={token}"
 
     except b2_exceptions.B2Error as e:
-        logging.error(f"[B2Error] generating presigned URL for {file_id}: {e}")
+        logging.error(f"[B2Error] presigning {file_id}: {e}")
         return None
     except Exception as e:
         logging.exception(f"[Unexpected] b2_get_download_url failed for {file_id}: {e}")
