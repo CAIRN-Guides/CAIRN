@@ -41,7 +41,9 @@ try:
 
     _info = InMemoryAccountInfo()
     _b2 = B2Api(_info)
+    # Authorize the B2API instance
     _b2.authorize_account("production", B2_KEY_ID, B2_KEY)
+    # Get the bucket object using the authorized B2API instance
     bucket: Bucket = _b2.get_bucket_by_name(B2_BUCKET_NAME)
     logging.info("Successfully initialized Supabase and Backblaze B2 clients.")
 except Exception as e:
@@ -116,7 +118,7 @@ if not ALLOWED_ORIGINS:
 
 app = FastAPI(
     title="CAIRN Document Finder API",
-    version="1.2", # Incremented version
+    version="1.3", # Incremented version
     description="Search & retrieve document metadata. Provides endpoints for generating B2 download URLs (single and batch ZIP)."
 )
 
@@ -130,25 +132,42 @@ app.add_middleware(
 
 # ─── Helper Functions ─────────────────────────────────────────────────────────
 
-# --- Corrected Helper Function ---
+# --- Corrected Helper Function v2 ---
 def b2_get_download_url(file_id: str, ttl: int = 3600) -> Optional[str]:
-    """Generates a presigned download URL for a B2 file ID."""
+    """Generates a presigned download URL for a B2 file ID using download authorization."""
     if not file_id:
         logging.warning("b2_get_download_url called with empty file_id")
         return None
     try:
         logging.info(f"Attempting to generate presigned URL for b2_file_id: {file_id} with TTL: {ttl}")
-        # --- FIX: Use the B2Api instance (_b2), not the bucket instance ---
         if not isinstance(_b2, B2Api):
              logging.error("B2 API object (_b2) is not initialized correctly.")
              return None
+        if not isinstance(bucket, Bucket):
+             logging.error("B2 Bucket object is not initialized correctly.")
+             return None
 
-        # Use the correct method from the B2Api object
-        url = _b2.get_download_url_for_fileid(file_id, valid_duration_in_seconds=ttl)
+        # --- FIX: Use get_download_authorization ---
+        # 1. Get the base download URL (without token)
+        # This uses the B2 API session which should be authorized
+        base_download_url = _b2.session.get_download_url_by_id(file_id)
+
+        # 2. Get a download authorization token for the bucket with the desired TTL
+        authorization_info = _b2.get_download_authorization(
+            bucket_id=bucket.id_, # Use the bucket ID obtained earlier
+            file_name_prefix='', # Authorize for any file in the bucket (or restrict if needed)
+            valid_duration_in_seconds=ttl,
+            b2_file_name=None # Not needed when using file ID URL base
+        )
+        auth_token = authorization_info['authorizationToken']
+
+        # 3. Construct the final URL
+        final_url = f"{base_download_url}?Authorization={auth_token}"
         # --- End Fix ---
 
         logging.info(f"Successfully generated URL for b2_file_id: {file_id}")
-        return url
+        return final_url
+
     except b2_exceptions.FileNotPresent as fnfe:
         # Specific error if the file ID doesn't exist in B2
         logging.error(f"[B2 SDK Error] File not present for file_id {file_id}: {fnfe}")
@@ -159,6 +178,7 @@ def b2_get_download_url(file_id: str, ttl: int = 3600) -> Optional[str]:
     except Exception as e:
         logging.exception(f"[Unexpected Error] Presign URL failed for {file_id}: {e}")
         return None
+
 
 def sanitize_filename(filename: str, max_length: int = 100) -> str:
     """Removes invalid characters and truncates filename."""
@@ -285,7 +305,7 @@ def get_documents(
         raise HTTPException(status_code=500, detail=f"Internal server error fetching documents: {e}")
 
 
-# --- Single File Download URL Endpoint (Unchanged) ---
+# --- Single File Download URL Endpoint (Uses corrected helper) ---
 @app.get("/documents/{doc_pk_id}/download-url", tags=["Download"], response_model=BatchDownloadResponse)
 async def get_single_download_url(
     doc_pk_id: int,
@@ -325,7 +345,7 @@ async def get_single_download_url(
         logging.info(f"Found b2_file_id: {b2_file_id} for PK: {doc_pk_id} ('{doc_title}')")
         # Generate short-lived URL (e.g., 5 minutes = 300 seconds)
         url_ttl = 300
-        download_url = b2_get_download_url(b2_file_id, ttl=url_ttl)
+        download_url = b2_get_download_url(b2_file_id, ttl=url_ttl) # Uses corrected helper
 
         if not download_url:
             logging.error(f"Failed to generate presigned URL for b2_file_id: {b2_file_id}")
@@ -346,7 +366,7 @@ async def get_single_download_url(
         raise HTTPException(status_code=500, detail="Internal server error generating download link.")
 
 
-# --- Batch Download URL Endpoint ---
+# --- Batch Download URL Endpoint (Uses corrected helper) ---
 @app.post("/documents/batch-download-url", tags=["Download"], response_model=BatchDownloadResponse)
 async def get_batch_download_url(
     request_data: BatchDownloadRequest,
@@ -375,8 +395,6 @@ async def get_batch_download_url(
 
     if invalid_ids:
         logging.warning(f"Invalid document IDs received in batch request: {invalid_ids}")
-        # Optionally raise error or just proceed with valid ones
-        # raise HTTPException(status_code=400, detail=f"Invalid document IDs provided: {invalid_ids}")
     if not doc_pk_ids:
          raise HTTPException(status_code=400, detail="No valid document IDs provided after validation.")
 
@@ -385,7 +403,6 @@ async def get_batch_download_url(
     # 1. Fetch B2 File IDs and Titles from Supabase
     files_to_zip = []
     try:
-        # Fetch in batches if needed, but for moderate numbers, 'in_' is fine
         result = supabase.table("files").select("id, b2_file_id, document_title, document_id")\
                        .in_("id", doc_pk_ids).execute()
 
@@ -401,7 +418,6 @@ async def get_batch_download_url(
                     })
                 else:
                     logging.warning(f"Document PK {item['id']} found but missing b2_file_id, skipping.")
-            # Log missing IDs
             missing_ids = set(doc_pk_ids) - found_ids
             if missing_ids:
                  logging.warning(f"Could not find database entries for requested PKs: {list(missing_ids)}")
@@ -425,8 +441,8 @@ async def get_batch_download_url(
             title = file_info['title']
             doc_id_text = file_info['doc_id']
 
-            # Generate short-lived URL for individual file
-            individual_url = b2_get_download_url(b2_id, ttl=60) # Short TTL just for download
+            # Generate short-lived URL for individual file using corrected helper
+            individual_url = b2_get_download_url(b2_id, ttl=120) # Short TTL just for download
             if not individual_url:
                 logging.error(f"Failed to get download URL for b2_id {b2_id} (PK: {pk_id}), skipping.")
                 errors_downloading.append(pk_id)
@@ -439,8 +455,7 @@ async def get_batch_download_url(
 
                 # Sanitize filename for ZIP entry
                 base_name = sanitize_filename(title or doc_id_text or f"file_{pk_id}")
-                # Basic extension guessing (improve if file_format column exists)
-                extension = ".pdf"
+                extension = ".pdf" # Default assumption
                 if '.' in base_name:
                      base, dot, ext = base_name.rpartition('.')
                      if len(ext) <= 4 and len(ext) > 1:
@@ -469,24 +484,19 @@ async def get_batch_download_url(
     zip_content = zip_buffer.getvalue()
     zip_filename_b2 = f"{B2_TEMP_ZIP_PREFIX}{uuid.uuid4()}.zip"
     suggested_download_filename = f"cairn_download_{files_added_count}_files.zip"
+    uploaded_b2_file_id = None # Initialize
 
     try:
         logging.info(f"Uploading generated ZIP file to B2 as: {zip_filename_b2}")
-        bucket.upload_bytes(
+        # Use upload_bytes which returns FileVersionInfo
+        file_version_info = bucket.upload_bytes(
             data_bytes=zip_content,
             file_name=zip_filename_b2,
             content_type='application/zip'
-            # Optional: Add fileInfo metadata if needed
         )
-        # Get the file ID of the uploaded ZIP
-        # Note: upload_bytes doesn't directly return file_id easily.
-        # We need to list or assume the upload worked and use the filename.
-        # For simplicity, we'll generate the URL based on the filename.
-        # A more robust way involves listing or using specific upload methods.
-
-        # Let's try getting file info by name after upload
-        uploaded_file_info = bucket.get_file_info_by_name(zip_filename_b2)
-        uploaded_b2_file_id = uploaded_file_info.id
+        uploaded_b2_file_id = file_version_info.id_ # Get the ID from the returned info
+        if not uploaded_b2_file_id:
+             raise Exception("B2 upload did not return a file ID.")
         logging.info(f"Successfully uploaded ZIP. B2 File ID: {uploaded_b2_file_id}")
 
     except b2_exceptions.B2Error as b2e:
@@ -496,7 +506,7 @@ async def get_batch_download_url(
          logging.exception(f"Unexpected error uploading ZIP file '{zip_filename_b2}': {e}")
          raise HTTPException(status_code=500, detail="Internal error storing generated ZIP file.")
 
-    # 4. Generate Pre-signed URL for the ZIP
+    # 4. Generate Pre-signed URL for the ZIP using the corrected helper
     zip_download_url = b2_get_download_url(uploaded_b2_file_id, ttl=ZIP_URL_TTL_SECONDS)
 
     if not zip_download_url:
@@ -507,7 +517,6 @@ async def get_batch_download_url(
     logging.info(f"Generated final download URL for ZIP: {zip_filename_b2}")
     if errors_downloading:
          logging.warning(f"Batch download complete, but errors occurred for PKs: {errors_downloading}")
-         # Optionally include this info in the response if needed
 
     # 5. Return URL to Frontend
     return {
@@ -521,4 +530,3 @@ async def get_batch_download_url(
 # if __name__ == "__main__":
 #     import uvicorn
 #     uvicorn.run(app, host="0.0.0.0", port=8000)
-
