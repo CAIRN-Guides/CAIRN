@@ -323,7 +323,47 @@ async def get_single_download_url(
         raise HTTPException(status_code=500, detail="Internal server error generating download link.")
 
 # --- Add endpoints for Zipping later if needed ---
+@app.post("/documents/download-zip", tags=["Download"])
+async def download_documents_zip(
+    doc_ids: List[int] = Body(..., embed=True),
+    current_user: Optional[dict] = Depends(get_current_user),
+):
+    """
+    Fetches each document’s B2-presigned URL, downloads it,
+    zips them together, and streams back a single ZIP file.
+    """
+    if not doc_ids:
+        raise HTTPException(status_code=400, detail="No document IDs provided")
 
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for pk in doc_ids:
+            # 1) retrieve b2_file_id and title
+            result = supabase.table("files")\
+                .select("b2_file_id, document_title")\
+                .eq("id", pk).maybe_single().execute()
+            data = result.data or {}
+            file_id = data.get("b2_file_id")
+            title   = data.get("document_title", f"document_{pk}")
+            if not file_id:
+                continue  # skip
+            # 2) get a short‐lived URL
+            url = b2_get_download_url(file_id, ttl=300)
+            if not url:
+                continue
+            # 3) stream file content
+            resp = requests.get(url, stream=True, timeout=30)
+            resp.raise_for_status()
+            # 4) write into the zip under a safe name
+            name = f"{title[:40].replace(' ','_') or pk}.pdf"
+            zf.writestr(name, resp.content)
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="cairn_selected.zip"'}
+    )
 # Example of running locally (if needed for testing)
 # if __name__ == "__main__":
 #     import uvicorn
