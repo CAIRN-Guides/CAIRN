@@ -1,4 +1,6 @@
 # frontend/app.py
+# Full drop-in replacement code incorporating fixes
+
 import os
 import streamlit as st
 import requests
@@ -6,6 +8,7 @@ import pandas as pd
 from dotenv import load_dotenv
 from PIL import Image # Keep if used elsewhere
 import time # Import time for spinner delays if needed
+from datetime import date # Added for date conversion check
 
 # Make sure AgGrid is installed: pip install streamlit-aggrid
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, ColumnsAutoSizeMode
@@ -67,7 +70,6 @@ for col in date_fields:
      if st.session_state[f"filter_{col}"] is not None:
          try:
             # Assuming ISO format string was stored
-            from datetime import date
             current_val = date.fromisoformat(st.session_state[f"filter_{col}"])
          except (TypeError, ValueError):
              current_val = None # Reset if conversion fails
@@ -120,9 +122,6 @@ st.session_state.page_size = st.sidebar.number_input("Page Size", min_value=1, m
 params["page"] = st.session_state.page
 params["page_size"] = st.session_state.page_size
 
-# Removed include_download_url checkbox
-# params["include_download_url"] = st.sidebar.checkbox("Include Download URL", value=False)
-
 # --- Load Button ---
 load_button_pressed = st.sidebar.button("Load Documents", type="primary")
 
@@ -135,9 +134,40 @@ about_tab, search_tab, tags_tab = st.tabs([
 
 with about_tab:
     # --- Keep existing About content ---
+    # (Assuming your About content is here)
     st.markdown("""
     ## What is CAIRN?
-    ... [rest of your About content] ...
+
+    Inspired by the stone cairns that guide hikers through uncertain terrain, **Project CAIRN** is designed to help you navigate the complex landscape of energy utility regulation. Built by 9zero members and partners, CAIRN uses artificial intelligence (AI) to collect, categorize, and unlock insights from the vast collection of documents produced by utilities, regulators, and other stakeholders. Our goal is to foster collaboration and innovation by making this crucial information more accessible and understandable.
+
+    ### Why Do Utility Documents Matter?
+
+    Every day, decisions impacting our energy future are documented in regulatory filings, dockets, integrated resource plans (IRPs), rate cases, and policy directives. These documents determine:
+
+    * **Your Energy Bills:** How rates are set and what infrastructure costs you pay for.
+    * **Grid Reliability:** Plans for maintaining and upgrading power lines and generation to keep the lights on, especially during extreme weather.
+    * **Climate Action:** How utilities plan to reduce emissions, integrate renewable energy (like solar and wind), and adapt to climate change risks (like wildfires and heatwaves).
+    * **New Technologies:** The adoption process for things like electric vehicles (EVs), battery storage, and smart grid technologies.
+
+    However, these documents are often incredibly dense, technical, numerous, and scattered across different agencies and websites. Tracking developments or finding specific information can be a major challenge, slowing down progress and innovation.
+
+    ### How CAIRN Helps
+
+    CAIRN tackles this complexity head-on. We are building a system that:
+
+    1.  **Stores Documents:** Collects and storing documents in a single shared database (using Backblaze B2).
+    2.  **Organizes & Tags:** Uses humans and AI (via Supabase/PostgreSQL and Google Sheets integration) to categorize documents by utility, topic, date, document type, and other key factors. See the **🏷️ Tag Definitions** tab for details on searchable fields.
+    3.  **Enables Targeted Search:** Allows you to filter and search the database (using the **🔍 Search Documents** tab!) to find precisely the documents you need. *(Roadmap includes semantic search and RAG)*.
+
+    By streamlining access to this information, CAIRN aims to help environmental advocates, utility planners, regulatory analysts, researchers, and concerned citizens understand the landscape, track progress, compare approaches, and contribute more effectively to shaping our energy future.
+
+    ### Getting Started: How to Query the CAIRN Database
+
+    1.  Review the **🏷️ Tag Definitions** tab to understand the available search fields and common terms.
+    2.  Click on the **🔍 Search Documents** tab.
+    3.  Use the **filters in the sidebar** on the left to narrow down the vast collection of documents.
+    4.  Once filters are set, click the **"Load Documents"** button in the sidebar.
+    5.  The table will populate within the **🔍 Search Documents** tab. You can then sort, filter, search, download, and view details.
     """)
 
 with search_tab:
@@ -158,12 +188,12 @@ with search_tab:
         with st.spinner('Fetching documents from CAIRN API...'):
             try:
                 # Use AUTH_HEADERS if authentication is implemented
-                resp = requests.get(f"{API_URL}/documents", params=params, headers=AUTH_HEADERS, timeout=45) # Increased timeout
+                resp = requests.get(f"{API_URL}/documents", params=params, headers=AUTH_HEADERS, timeout=45)
                 resp.raise_for_status() # Raises HTTPError for bad responses (4XX, 5XX)
 
                 docs_data = resp.json()
                 docs = docs_data.get("data", [])
-                st.session_state.total_docs = docs_data.get("total_count", len(docs)) # Use total_count from response
+                st.session_state.total_docs = docs_data.get("total_count", len(docs))
                 st.session_state.current_page_for_display = params.get('page', 1)
                 page_size = params.get('page_size', 20)
                 st.session_state.total_pages = (st.session_state.total_docs + page_size - 1) // page_size if st.session_state.total_docs > 0 else 1
@@ -174,22 +204,16 @@ with search_tab:
                 else:
                     # --- Build DataFrame & process ---
                     df = pd.DataFrame(docs)
-                    # Ensure 'id' column exists
                     if 'id' not in df.columns:
                          st.error("Critical Error: 'id' column missing from API response. Downloads will fail.")
-                         st.stop() # Stop execution if ID is missing
+                         st.stop()
 
-                    # Flatten list columns for display
                     for lc in list_cols:
                         if lc in df.columns:
                             df[lc] = df[lc].apply(lambda x: ", ".join(map(str, x)) if isinstance(x, list) else x)
 
-                    # Define columns to display and their order
-                    # Make sure 'id' is conceptually included, even if not displayed later
                     cols_order_original = [
-                        "id", # Include ID for selection lookup, can hide later in AgGrid
-                        "document_id", "local_backup_name",
-                        "document_title", "published_date", #"document_author", # Add if available
+                        "id", "document_id", "local_backup_name", "document_title", "published_date",
                         "org_utility_name", "docket_number", "document_type", "document_subtype",
                         "document_url", "cairn_url", "rate_impact", "utility_reform",
                         "energy_resources", "customer_classes", "ders",
@@ -199,16 +223,13 @@ with search_tab:
                         "parent_document", "related_documents", "replaces_document",
                         "relationship_types"
                     ]
-                    # Filter to only columns present in the DataFrame
                     cols_available = [col for col in cols_order_original if col in df.columns]
                     df_processed = df[cols_available]
 
-                    # Rename columns for display
                     rename_map = {
-                         "id": "PK_ID", # Rename internal ID if desired, or hide later
+                         "id": "PK_ID", # Rename internal ID for display logic
                          "document_id":        "File ID",
                          "local_backup_name":  "Local Backup Name",
-                         # ... keep your existing rename map ...
                          "document_title":     "Document Title",
                          "published_date":     "Published Date",
                          "document_author":    "Document Author",
@@ -237,81 +258,90 @@ with search_tab:
                          "replaces_document":  "Replaces Document",
                          "relationship_types": "Relationship Types",
                     }
-                    # Apply renaming only for columns that exist
                     df_renamed = df_processed.rename(columns={k: v for k, v in rename_map.items() if k in df_processed.columns})
-
-                    # Store processed DataFrame in session state
                     st.session_state.search_results_df = df_renamed
 
             except requests.exceptions.RequestException as e:
                 st.error(f"API Request Failed: {e}")
-                st.session_state.search_results_df = pd.DataFrame() # Clear results on error
+                st.session_state.search_results_df = pd.DataFrame()
             except Exception as e:
                 st.error(f"An error occurred while processing data: {e}")
                 import traceback
                 st.error(traceback.format_exc())
-                st.session_state.search_results_df = pd.DataFrame() # Clear results on error
+                st.session_state.search_results_df = pd.DataFrame()
 
     # --- Display Results Area ---
+    # This section now runs on every rerun if results exist in session state
     if not st.session_state.search_results_df.empty:
         st.write(f"Showing **{len(st.session_state.search_results_df)}** of **{st.session_state.total_docs}** total documents (Page {st.session_state.current_page_for_display} of {st.session_state.total_pages})")
 
         # --- Quick Search ---
-        search_term = st.text_input("🔎 Quick Search current results", key="quick_search_input")
+        search_term = st.text_input("🔎 Quick Search current results", key="quick_search_input_main") # Unique key
         df_display = st.session_state.search_results_df
         if search_term:
             mask = df_display.apply(lambda row: row.astype(str).str.contains(search_term, case=False, na=False).any(), axis=1)
             df_display = df_display[mask]
+            st.write(f"Showing {len(df_display)} rows matching quick search.") # Feedback on quick search
 
         # --- Configure AgGrid ---
         gb = GridOptionsBuilder.from_dataframe(df_display)
         gb.configure_default_column(
-            # filter="agTextColumnFilter", filterParams={"debounceMs": 300}, # Defer filter application
             sortable=True, resizable=True, wrapText=True, autoHeight=True, minWidth=150,
-            filter=True, floatingFilter=True # Enable column filters
+            filter=True, floatingFilter=True
         )
-        # Hide the internal primary key column if renamed or not needed for direct view
         if "PK_ID" in df_display.columns:
-             gb.configure_column("PK_ID", hide=True)
-        # Make URLs clickable
+             gb.configure_column("PK_ID", hide=True) # Hide internal primary key
         if "Document URL" in df_display.columns:
             gb.configure_column("Document URL", cellRenderer='''function(params) { return params.value ? '<a href="' + params.value + '" target="_blank" rel="noopener noreferrer">'+ params.value +'</a>' : ''; }''')
         if "CAIRN URL" in df_display.columns:
             gb.configure_column("CAIRN URL", cellRenderer='''function(params) { return params.value ? '<a href="' + params.value + '" target="_blank" rel="noopener noreferrer">'+ params.value +'</a>' : ''; }''')
 
         gb.configure_side_bar(filters_panel=True, columns_panel=True)
-        # Use client-side pagination within AgGrid for the current page's data
-        gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=st.session_state.page_size)
-        gb.configure_selection(selection_mode="multiple", use_checkbox=True, header_checkbox=True) # Enable checkboxes
-        gb.configure_grid_options(domLayout='normal') # normal layout is often better than autoHeight
+        gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=st.session_state.page_size) # Client-side pagination for view
+        gb.configure_selection(selection_mode="multiple", use_checkbox=True, header_checkbox=True)
+        gb.configure_grid_options(domLayout='normal')
         grid_opts = gb.build()
 
-        # Display AgGrid
+        # --- Display AgGrid ---
         grid_response = AgGrid(
             df_display,
             gridOptions=grid_opts,
-            key='document_grid', # Consistent key
+            key='document_grid_main', # Unique key
             height=600,
             width='100%',
-            columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS, # Adjust column size
-            # update_mode=GridUpdateMode.MODEL_CHANGED | GridUpdateMode.SELECTION_CHANGED, # Listen for changes
-            update_mode=GridUpdateMode.SELECTION_CHANGED, # Primarily interested in selection
-            data_return_mode=DataReturnMode.AS_INPUT, # Important: return data as it was passed in
-            allow_unsafe_jscode=True, # Needed for cellRenderers
-            enable_enterprise_modules=False, # Unless you have a license
-            reload_data=False # Avoid unnecessary reloads, manage data via session state
+            columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
+            data_return_mode=DataReturnMode.AS_INPUT,
+            allow_unsafe_jscode=True,
+            enable_enterprise_modules=False,
+            reload_data=True # Reload data if df_display changes (e.g. quick search)
+                             # Set to False if causing issues, manage updates manually
         )
 
-# --- Actions Area Below Grid (Download, Details) ---
-        st.markdown("---")
-        # Use .get() for safer access - returns None if key is missing
+        # --- Actions Area Below Grid ---
+        st.markdown("---") # Separator before actions
+
+        # --- Download current view as CSV (Relocated) ---
+        # This button is always available if df_display (grid data) is not empty
+        if not df_display.empty:
+            csv_data = df_display.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                 label="📄 Download Current View as CSV",
+                 data=csv_data,
+                 file_name="cairn_documents_export.csv",
+                 mime="text/csv",
+                 key='csv_download_view_main' # Unique key
+            )
+            st.markdown("---") # Optional separator after CSV button
+
+        # --- Selection-dependent Actions ---
+        # Use .get() for safer access - returns None if key is missing or grid hasn't fully initialized
         selected_rows = grid_response.get("selected_rows")
 
-        col_act_1, col_act_2 = st.columns([1, 3]) # Layout columns for buttons/details
+        col_act_1, col_act_2 = st.columns([1, 3]) # Layout columns for selection actions/details
 
         with col_act_1:
-            # --- Download Button Logic ---
-
+            # --- Download Button Logic (SINGLE CORRECT BLOCK) ---
             # Check if selected_rows is a non-None sequence (list) before using len()
             if selected_rows and isinstance(selected_rows, list):
                 num_selected = len(selected_rows)
@@ -319,13 +349,13 @@ with search_tab:
                 if num_selected == 1:
                     # --- Single Selection Download Button ---
                     selected_doc = selected_rows[0]
-                    # Get the original primary key ('id') - Ensure PK_ID mapping is correct if used
-                    doc_pk_id = selected_doc.get('PK_ID') or selected_doc.get('id') # Check both possibilities
+                    # Get the original primary key ('id'), checking for PK_ID rename first
+                    doc_pk_id = selected_doc.get('PK_ID') or selected_doc.get('id')
                     doc_title = selected_doc.get('Document Title', f'File ID {selected_doc.get("File ID", doc_pk_id)}')
 
                     if doc_pk_id:
-                        button_label = f"⬇️ Download: {doc_title[:50]}..."
-                        button_key = f"download_{doc_pk_id}"
+                        button_label = f"⬇️ Download Selected: {doc_title[:40]}..."
+                        button_key = f"download_single_{doc_pk_id}" # Unique key
 
                         if st.button(button_label, key=button_key):
                             download_url_endpoint = f"{API_URL}/documents/{doc_pk_id}/download-url"
@@ -336,146 +366,67 @@ with search_tab:
                                     download_info = dl_resp.json()
                                     url = download_info.get("url")
                                     if url:
+                                        # Store link temporarily in session state to display after rerun
                                         st.session_state[f'download_link_{doc_pk_id}'] = url
                                     else:
                                         st.error("Backend did not return a valid download link.")
-                                        if f'download_link_{doc_pk_id}' in st.session_state: del st.session_state[f'download_link_{doc_pk_id}']
+                                        # Clean up state if key exists
+                                        st.session_state.pop(f'download_link_{doc_pk_id}', None)
 
                             except requests.exceptions.HTTPError as http_err:
-                                 detail = "Unknown error"
+                                 detail = f"Server error ({http_err.response.status_code})"
                                  try: detail = http_err.response.json().get('detail', detail)
                                  except: pass
-                                 st.error(f"Download Failed ({http_err.response.status_code}): {detail}")
-                                 if f'download_link_{doc_pk_id}' in st.session_state: del st.session_state[f'download_link_{doc_pk_id}']
+                                 st.error(f"Download Failed: {detail}")
+                                 st.session_state.pop(f'download_link_{doc_pk_id}', None)
                             except requests.exceptions.RequestException as req_err:
                                 st.error(f"Network Error: Could not reach download API. {req_err}")
-                                if f'download_link_{doc_pk_id}' in st.session_state: del st.session_state[f'download_link_{doc_pk_id}']
+                                st.session_state.pop(f'download_link_{doc_pk_id}', None)
                             except Exception as e:
                                 st.error(f"An unexpected error occurred: {e}")
-                                if f'download_link_{doc_pk_id}' in st.session_state: del st.session_state[f'download_link_{doc_pk_id}']
+                                st.session_state.pop(f'download_link_{doc_pk_id}', None)
 
-                        # Display the download link generated in this specific button press action
+                        # Display the download link IF it was generated in THIS specific button action's rerun cycle
                         # Check session state for the key associated with this specific button
-                        if st.session_state.get(f'download_link_{doc_pk_id}'):
-                            link = st.session_state.get(f'download_link_{doc_pk_id}')
-                            # Use markdown for a clear link.
+                        link_key = f'download_link_{doc_pk_id}'
+                        if st.session_state.get(link_key):
+                            link = st.session_state.get(link_key)
                             st.markdown(f'✅ Link ready: <a href="{link}" target="_blank" download>Click here to download "{doc_title[:50]}..."</a>', unsafe_allow_html=True)
-                            # Remove the link from state after displaying to prevent it showing up on unrelated reruns
-                            del st.session_state[f'download_link_{doc_pk_id}']
-
+                            # Remove the link from state immediately after displaying it
+                            del st.session_state[link_key]
 
                 elif num_selected > 1:
                     # --- Multiple Selection Placeholder ---
-                    st.button(f"⬇️ Download {len(selected_rows)} Selected as ZIP", key="download_selected_zip", disabled=True) # Placeholder for future ZIP feature
+                    st.button(f"⬇️ Download {num_selected} Selected as ZIP", key="download_selected_zip_main", disabled=True)
                     st.caption("(ZIP download not yet implemented)")
+                # Implicit else: num_selected is 0, do nothing specific here for downloads
 
-            # --- Download current view as CSV ---
-            # (Keep your existing CSV download logic here)
-            if not df_display.empty: # Use df_display which contains the potentially filtered data
-                csv_data = df_display.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                     label="📄 Download Current View as CSV",
-                     data=csv_data,
-                     file_name="cairn_documents_export.csv",
-                     mime="text/csv",
-                     key='csv_download_view' # Ensure key is unique if multiple download buttons exist
-                )
+            # else: # If selected_rows is None or not a list
+            #     st.caption("Select a single row to enable download.") # Optional feedback
 
         with col_act_2:
             # --- Detail pane for selected rows ---
              # Also check if selected_rows is valid here before proceeding
              if selected_rows and isinstance(selected_rows, list) and len(selected_rows) > 0:
                  st.markdown("#### Selected Document Details")
-                 sel_df = pd.DataFrame(selected_rows).drop(columns=["_selectedRowNodeInfo"], errors="ignore")
-                 if len(sel_df) == 1:
-                     st.dataframe(sel_df.iloc[0], use_container_width=True)
-                 else:
-                     st.dataframe(sel_df, use_container_width=True, height=200)
-
-        with col_act_1:
-            # --- Download Button for Single Selection ---
-            if len(selected_rows) == 1:
-                selected_doc = selected_rows[0]
-                # Get the original primary key ('id') using the renamed 'PK_ID' or original 'id'
-                doc_pk_id = selected_doc.get('PK_ID') or selected_doc.get('id') # Adjust based on renaming
-                doc_title = selected_doc.get('Document Title', f'File ID {selected_doc.get("File ID", doc_pk_id)}')
-
-                if doc_pk_id:
-                    if st.button(f"⬇️ Download: {doc_title[:50]}...", key=f"download_{doc_pk_id}"): # Use PK in key
-                        download_url_endpoint = f"{API_URL}/documents/{doc_pk_id}/download-url"
-                        try:
-                            with st.spinner(f"Generating secure link for '{doc_title[:30]}...'"):
-                                # Add headers=AUTH_HEADERS if auth is implemented
-                                dl_resp = requests.get(download_url_endpoint, headers=AUTH_HEADERS, timeout=20)
-                                dl_resp.raise_for_status() # Check for HTTP errors
-
-                                download_info = dl_resp.json()
-                                url = download_info.get("url")
-
-                                if url:
-                                    # Provide a robust link; use a temporary session state flag to show it only once
-                                    st.session_state[f'download_link_{doc_pk_id}'] = url
-                                else:
-                                    st.error("Backend did not return a valid download link.")
-                                    if f'download_link_{doc_pk_id}' in st.session_state: del st.session_state[f'download_link_{doc_pk_id}']
+                 try:
+                    sel_df = pd.DataFrame(selected_rows).drop(columns=["_selectedRowNodeInfo"], errors="ignore")
+                    if len(sel_df) == 1:
+                        st.dataframe(sel_df.iloc[0], use_container_width=True)
+                    else:
+                        st.dataframe(sel_df, use_container_width=True, height=200)
+                 except Exception as detail_e:
+                     st.error(f"Error displaying details: {detail_e}")
+             # else: # If no valid rows selected
+             #    st.caption("Select rows to see details here.") # Optional feedback
 
 
-                        except requests.exceptions.HTTPError as http_err:
-                             # Try to get detail from response
-                             detail = "Unknown error"
-                             try: detail = http_err.response.json().get('detail', detail)
-                             except: pass
-                             st.error(f"Download Failed ({http_err.response.status_code}): {detail}")
-                             if f'download_link_{doc_pk_id}' in st.session_state: del st.session_state[f'download_link_{doc_pk_id}']
-                        except requests.exceptions.RequestException as req_err:
-                            st.error(f"Network Error: Could not reach download API. {req_err}")
-                            if f'download_link_{doc_pk_id}' in st.session_state: del st.session_state[f'download_link_{doc_pk_id}']
-                        except Exception as e:
-                            st.error(f"An unexpected error occurred: {e}")
-                            if f'download_link_{doc_pk_id}' in st.session_state: del st.session_state[f'download_link_{doc_pk_id}']
-
-                    # Display the download link if it was successfully generated in this run
-                    if st.session_state.get(f'download_link_{doc_pk_id}'):
-                         link = st.session_state[f'download_link_{doc_pk_id}']
-                         # Use markdown for a clear link. The 'download' attribute helps browsers.
-                         st.markdown(f'✅ Link ready: <a href="{link}" target="_blank" download>Click here to download "{doc_title[:50]}..."</a>', unsafe_allow_html=True)
-                         # Optionally clear the link after showing it once or add a timeout
-                         # del st.session_state[f'download_link_{doc_pk_id}']
-
-            elif len(selected_rows) > 1:
-                st.button(f"⬇️ Download {len(selected_rows)} Selected as ZIP", key="download_selected_zip", disabled=True) # Placeholder for future ZIP feature
-                st.caption("(ZIP download not yet implemented)")
-
-
-            # --- Download current view as CSV ---
-            # Get filtered data directly from AgGrid response if needed, otherwise use df_display
-            # grid_df_view = pd.DataFrame(grid_response['data']) # This has the grid's current view
-            if not df_display.empty:
-                # Prepare CSV data from the currently displayed DataFrame (df_display)
-                csv_data = df_display.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                     label="📄 Download Current View as CSV",
-                     data=csv_data,
-                     file_name="cairn_documents_export.csv",
-                     mime="text/csv",
-                     key='csv_download'
-                )
-
-        with col_act_2:
-            # --- Detail pane for selected rows ---
-             if selected_rows:
-                 st.markdown("#### Selected Document Details")
-                 # Prepare DataFrame for display, remove AgGrid internal column if present
-                 sel_df = pd.DataFrame(selected_rows).drop(columns=["_selectedRowNodeInfo"], errors="ignore")
-                 if len(sel_df) == 1:
-                     # Transpose for better single-record view
-                     st.dataframe(sel_df.iloc[0], use_container_width=True)
-                 else:
-                     st.dataframe(sel_df, use_container_width=True, height=200) # Show multiple selected rows
-
-
-    elif load_button_pressed: # Handle case where button was pressed but no results came back
-         st.warning("No documents found for the current filters.")
+    elif load_button_pressed: # Handle case where button was pressed but API returned no results
+         # This message is now implicitly covered by the main display logic:
+         # If search_results_df becomes empty, the grid/actions won't show.
+         # Adding an explicit message here might be redundant unless desired.
+         # st.warning("No documents found for the current filters.")
+         pass
 
 
 with tags_tab:
@@ -483,23 +434,19 @@ with tags_tab:
     st.info("""
     This table explains the different fields (tags) used to categorize documents in CAIRN...
     """)
-    # ... [rest of your Tag Definitions DataFrame creation and display] ...
     tag_data = {
         'Tag Name (Filter)': [
-            "File ID", "Document Title", "Published Date", #"Document Author",
-             "Org/Utility Name",
+            "File ID", "Document Title", "Published Date", "Org/Utility Name",
             "Docket Number", "Document Type", "Document Subtype", "Document URL", "CAIRN URL",
             "Rate Impact", "Utility Reform", "Energy Resources", "Customer Classes", "DERs",
             "Physical Climate Risk", "Additional Keywords", "Tagger", "Date Tagged", "Quality Check",
             "Processing Notes", "State/Region", "Regulatory Body", "Jurisdiction Type",
             "Parent Document", "Related Documents", "Replaces Document", "Relationship Types"
-            # "Local Backup Name" is excluded as likely internal use only
         ],
         'Description': [
             "Unique identifier for the document record (e.g., C250001)",
             "Full official title of the document",
             "The date the document was published or filed",
-            #"The individual, firm, or entity that authored the document",
             "The primary utility, organization, or agency associated with the document",
             "The official proceeding number (e.g., UE-230810)",
             "The main category or classification of the document",
@@ -526,8 +473,7 @@ with tags_tab:
             "Describes the relationship to parent/related documents (e.g., Appendix, Comment)"
         ],
          'Common Examples / Format': [
-             "CYY##### format", "Text", "YYYY-MM-DD", #"Text",
-             "PSE, Avista, PGE, CAISO, PNNL",
+             "CYY##### format", "Text", "YYYY-MM-DD", "PSE, Avista, PGE, CAISO, PNNL",
              "UE-#####, UG-#####, etc.", "IRP/ISP, Assessment, Comment, Report, Regulatory Rate Plan", "Electric IRP, Gas IRP, Comment, Clean_Energy_Party, Integrated Resource Plan", "URL", "URL",
              "Y, N", "Y, N, Partial", "All, Gas, Solar, Storage, EE, Clean_Energy", "All, Residential, C&I", "Y, N",
              "Y, N", "IRP, Resilience, Decarbonization, MYRP", "Text (e.g., Apples)", "YYYY-MM-DD", "Y, N, Pending",
@@ -540,4 +486,4 @@ with tags_tab:
 
 # Optional Footer
 # st.markdown("---")
-# st.caption("CAIRN Project v1.1 | Powered by Streamlit")
+# st.caption("CAIRN Project v1.2 | Powered by Streamlit")
