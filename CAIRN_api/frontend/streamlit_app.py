@@ -1,11 +1,13 @@
 # frontend/streamlit_app.py
-# Full drop-in replacement code - v1.9 (Remove getRowId)
+# Full drop-in replacement code - v1.10 (Fix DataFrame Bool)
+# Fixes ValueError by using .empty attribute for DataFrame boolean checks.
 # Removes getRowId configuration entirely to rely on default row indexing.
 # Uses selected_rows, simplified update/return modes, reload_data=False removed.
 # Still ensures PK_ID is string in DataFrame for consistency.
 # Includes Basic/Advanced tabs, full About/Tags content.
 # Fixes SyntaxError in download exception handling.
 # Refactors download logic into a reusable function.
+
 
 import os
 import streamlit as st
@@ -395,18 +397,27 @@ with search_basic_tab:
 
             # --- Use selected_rows (relying on default indexing now) ---
             selected_rows_basic = grid_response_basic.get("selected_rows")
+            # The 'data' key contains the DataFrame reflecting the current state (filtered/sorted)
+            displayed_df_basic = grid_response_basic.get('data')
 
             # --- Actions Area Below Basic Grid ---
             st.markdown("---")
             # Download the *displayed* data after filtering
-            csv_data_basic = pd.DataFrame(grid_response_basic['data']).to_csv(index=False).encode('utf-8') if grid_response_basic['data'] else "".encode('utf-8')
+            # <<< FIX: Check if displayed_df_basic is not None and not empty >>>
+            csv_data_basic_bytes = "".encode('utf-8')
+            disable_csv_download = True
+            if displayed_df_basic is not None and not displayed_df_basic.empty:
+                csv_data_basic_bytes = displayed_df_basic.to_csv(index=False).encode('utf-8')
+                disable_csv_download = False
+
             st.download_button(
                 label="📄 Download Basic View as CSV",
-                data=csv_data_basic,
+                data=csv_data_basic_bytes,
                 file_name="cairn_basic_export.csv",
                 mime="text/csv",
                 key='csv_download_basic',
-                disabled=not grid_response_basic['data'] # Disable if no data displayed
+                # <<< FIX: Disable based on DataFrame's empty attribute >>>
+                disabled=disable_csv_download
             )
             st.markdown("---")
 
@@ -520,18 +531,28 @@ with search_advanced_tab:
 
             # --- Use selected_rows (relying on default indexing now) ---
             selected_rows_advanced = grid_response_advanced.get("selected_rows")
+            # The 'data' key contains the DataFrame reflecting the current state (filtered/sorted)
+            displayed_df_advanced = grid_response_advanced.get('data')
+
 
             # --- Actions Area Below Advanced Grid ---
             st.markdown("---")
             # Download the *displayed* data after filtering
-            csv_data_advanced = pd.DataFrame(grid_response_advanced['data']).to_csv(index=False).encode('utf-8') if grid_response_advanced['data'] else "".encode('utf-8')
+            # <<< FIX: Check if displayed_df_advanced is not None and not empty >>>
+            csv_data_advanced_bytes = "".encode('utf-8')
+            disable_csv_download_adv = True
+            if displayed_df_advanced is not None and not displayed_df_advanced.empty:
+                csv_data_advanced_bytes = displayed_df_advanced.to_csv(index=False).encode('utf-8')
+                disable_csv_download_adv = False
+
             st.download_button(
                 label="📄 Download Advanced View as CSV",
-                data=csv_data_advanced,
+                data=csv_data_advanced_bytes,
                 file_name="cairn_advanced_export.csv",
                 mime="text/csv",
                 key='csv_download_advanced',
-                disabled=not grid_response_advanced['data'] # Disable if no data displayed
+                # <<< FIX: Disable based on DataFrame's empty attribute >>>
+                disabled=disable_csv_download_adv
             )
             st.markdown("---")
 
@@ -640,4 +661,4 @@ with tags_tab:
 
 # Optional Footer
 st.markdown("---")
-st.caption("CAIRN Project v1.9 | Powered by Streamlit")
+st.caption("CAIRN Project v1.10 | Powered by Streamlit")
