@@ -48,95 +48,55 @@ st.set_page_config(page_title="CAIRN Finder", layout="wide")
 
 def handle_batch_download(doc_pk_ids, tab_prefix):
     """
-    Handles the batch download button click, API call for a ZIP URL,
-    error handling, and displaying the download link via session state.
-
-    Args:
-        doc_pk_ids: A list of primary key IDs (strings) for the documents to download.
-        tab_prefix: A unique string ('basic' or 'advanced') to namespace keys.
+    Handles the batch download button click, API call for signed URLs,
+    error handling, and displaying the list of download links via session state.
     """
     if not doc_pk_ids:
         st.warning("No documents displayed to download.")
         return
 
-    num_docs = len(doc_pk_ids)
-    button_label = f"⬇️ Download {num_docs} Displayed File{'s' if num_docs > 1 else ''} as ZIP"
-    # Use a generic key for batch download per tab
-    button_key = f"download_batch_{tab_prefix}"
-    link_key = f'batch_download_link_{tab_prefix}'
+    button_label = f"⬇️ Generate download links for {len(doc_pk_ids)} file{'s' if len(doc_pk_ids)>1 else ''}"
+    key_base = f"batch_{tab_prefix}"
+    urls_key = f"{key_base}_urls"
 
-    # Display the download link first if it exists from a previous click/rerun
-    if link_key in st.session_state:
-        link_info = st.session_state[link_key]
-        link = link_info.get("url")
-        filename = link_info.get("filename", f"cairn_download_{tab_prefix}.zip") # Default filename
-        if link:
-            # Use the suggested filename from API if provided, else default
-            filename_attr = f'download="{filename}"'
-            st.markdown(f'✅ ZIP Link ready: <a href="{link}" target="_blank" {filename_attr}>Click here to download ({num_docs} files)</a>', unsafe_allow_html=True)
-        # Clear the state after displaying the link
-        del st.session_state[link_key]
+    # If we’ve already fetched URLs on a previous run, show them now
+    if urls_key in st.session_state:
+        st.markdown("**Download URLs:**")
+        for item in st.session_state[urls_key]:
+            url = item["url"]
+            fn  = item.get("filename", "")
+            st.markdown(f"- <a href='{url}' target='_blank' download='{fn}'>{fn or url}</a>", unsafe_allow_html=True)
+        st.markdown("---")
+        # don’t clear them here so the links persist until the user reloads or changes filters
 
-    # Display the button
-    if st.button(button_label, key=button_key):
-        # Clear any existing link state for this item when button is clicked
-        if link_key in st.session_state:
-            del st.session_state[link_key]
-
-        # --- THIS REQUIRES A NEW BACKEND ENDPOINT ---
-        batch_download_url_endpoint = f"{API_URL}/documents/batch-download-url"
-        st.info(f"Requesting ZIP download for {num_docs} documents. This may take a moment...")
-
+    # Only show the “generate” button if we haven’t fetched URLs yet
+    if urls_key not in st.session_state and st.button(button_label, key=f"btn_{key_base}"):
+        st.info(f"Fetching signed URLs for {len(doc_pk_ids)} files…")
         try:
-            with st.spinner(f"Generating ZIP file link for {num_docs} documents..."):
-                # Send the list of IDs in the request body as JSON
-                payload = {"document_ids": doc_pk_ids}
-                headers = {**AUTH_HEADERS, 'Content-Type': 'application/json'}
-
-                dl_resp = requests.post( # Use POST to send a request body
-                    batch_download_url_endpoint,
-                    headers=headers,
-                    json=payload, # Send IDs as JSON payload
-                    timeout=DOWNLOAD_API_TIMEOUT_SECONDS # Allow more time for zipping
+            with st.spinner("Generating signed URLs…"):
+                resp = requests.post(
+                    f"{API_URL}/documents/batch-signed-urls",
+                    headers={**AUTH_HEADERS, "Content-Type": "application/json"},
+                    json={"document_ids": doc_pk_ids},
+                    timeout=DOWNLOAD_API_TIMEOUT_SECONDS,
                 )
-                dl_resp.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+                resp.raise_for_status()
+                data = resp.json()
+                urls = data.get("urls", [])
+                if not urls:
+                    st.error("No downloadable files returned.")
+                    return
 
-                url_data = dl_resp.json()
-                url = url_data.get("url")
-                # Optional: Get suggested filename for the ZIP from API response
-                filename = url_data.get("filename", f"cairn_download_{tab_prefix}_{num_docs}_files.zip")
+                # Store and immediately render on next rerun
+                st.session_state[urls_key] = urls
+                st.experimental_rerun()
 
-                if url:
-                    # Store URL and filename in session state to survive the rerun
-                    st.session_state[link_key] = {"url": url, "filename": filename}
-                    # Use st.rerun() to immediately show the link generated
-                    st.rerun()
-                else:
-                    st.error("API did not return a valid download link for the batch.")
-                    st.session_state.pop(link_key, None) # Ensure cleaned up if error
-
-        except requests.exceptions.HTTPError as http_err:
-            status_code = http_err.response.status_code
-            detail = f"Server error ({status_code})"
-            if status_code == 404:
-                 detail = "Batch download endpoint not found on server. (Backend implementation required)"
-            else:
-                try:
-                    error_content = http_err.response.json()
-                    detail = error_content.get('detail', detail)
-                except requests.exceptions.JSONDecodeError:
-                    detail = f"Server error ({status_code}): {http_err.response.text[:100]}"
-                except Exception:
-                     pass
+        except requests.exceptions.HTTPError as e:
+            detail = e.response.json().get("detail", str(e))
             st.error(f"Batch Download Failed: {detail}")
-            st.session_state.pop(link_key, None)
-
-        except requests.exceptions.RequestException as req_err:
-            st.error(f"Network Error generating batch download link: {req_err}")
-            st.session_state.pop(link_key, None)
         except Exception as e:
-            st.error(f"An unexpected error occurred generating the batch download link: {e}")
-            st.session_state.pop(link_key, None)
+            st.error(f"Error generating batch download links: {e}")
+
 
 
 # ─── Header Display ───────────────────────────────────────────────────────────
