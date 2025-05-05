@@ -11,7 +11,7 @@ from PIL import Image # Keep if used elsewhere
 import time # Import time for spinner delays if needed
 from datetime import date # Added for date conversion check
 
-# Make sure AgGrid is installed: pip install streamlit-aggrid streamlit-aggrid-ext
+# Make sure AgGrid is installed: pip install streamlit-aggrid
 # Updated import for JsCode location can vary, check st_aggrid docs if needed
 try:
     from st_aggrid.shared import JsCode
@@ -21,146 +21,236 @@ except ImportError:
         from st_aggrid.grid_options_builder import JsCode
     except ImportError:
         st.error("Could not import JsCode from streamlit-aggrid. Please ensure streamlit-aggrid is installed correctly.")
-        st.stop() # Stop execution if JsCode cannot be imported
+        # Stop execution if JsCode cannot be imported, as AgGrid configuration will fail
+        st.stop()
 
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, ColumnsAutoSizeMode
 
 # --- Constants ---
+# Columns to display in the basic search view
 BASIC_COLUMNS_TO_SHOW = ["File ID", "Document Title", "Org/Utility Name", "Document Type", "Published Date"]
-# PK_ID is needed internally but will be hidden
+# PK_ID is needed internally for actions but will be hidden in the grid display
 
-# ─── Load env & page setup ─────────────────────────────────────────────────────
-load_dotenv()
-API_URL = os.getenv("API_URL", "http://localhost:8000") # Default to local FastAPI if not set
+# ─── Load Environment Variables & Page Setup ──────────────────────────────────
+load_dotenv() # Load variables from .env file if present
+# Get the backend API URL from environment variable, default to localhost for development
+API_URL = os.getenv("API_URL", "http://localhost:8000")
+# Placeholder for authentication headers - adapt if auth is implemented
 AUTH_HEADERS = {}
 if 'user_token' in st.session_state:
      AUTH_HEADERS = {"Authorization": f"Bearer {st.session_state['user_token']}"}
 
+# Configure Streamlit page settings
 st.set_page_config(page_title="CAIRN Finder", layout="wide")
 
-# ─── Header ───────────────────────────────────────────────────────────────────
-col1, col2 = st.columns([1, 6]) # Adjust ratio
+# ─── Header Display ───────────────────────────────────────────────────────────
+col1, col2 = st.columns([1, 6]) # Adjust column ratio for logo and title
 with col1:
-    try: st.image("https://raw.githubusercontent.com/CAIRN-Guides/CAIRN/refs/heads/main/CAIRN_api/frontend/CAIRN_BW_Photo_4.13.25.webp", width=60)
-    except: st.caption("CAIRN Logo") # Fallback text
-with col2: st.title("CAIRN Document Finder")
+    try:
+        # Display the CAIRN logo image
+        st.image("https://raw.githubusercontent.com/CAIRN-Guides/CAIRN/refs/heads/main/CAIRN_api/frontend/CAIRN_BW_Photo_4.13.25.webp", width=60)
+    except Exception as img_e:
+        # Fallback text if image fails to load
+        st.caption("CAIRN Logo")
+with col2:
+    # Display the main application title
+    st.title("CAIRN Document Finder")
 
-# ─── Sidebar filters ──────────────────────────────────────────────────────────
+# ─── Sidebar Filters Setup ───────────────────────────────────────────────────
 st.sidebar.header("Filters")
-params = {}
-# Text inputs
-text_cols = ["document_id", "document_title", "local_backup_name", "tagger", "file_format", "rate_impact", "quality_check", "regulatory_body", "state_region", "docket_number", "document_type", "org_utility_name", "parent_document", "replaces_document", "document_url", "cairn_url", "processing_notes"]
+params = {} # Dictionary to hold query parameters for the API call
+
+# --- Text input filters ---
+# List of database columns that accept text filtering
+text_cols = [
+    "document_id", "document_title", "local_backup_name", "tagger", "file_format",
+    "rate_impact", "quality_check", "regulatory_body", "state_region", "docket_number",
+    "document_type", "org_utility_name", "parent_document", "replaces_document",
+    "document_url", "cairn_url", "processing_notes"
+]
+# Create text input fields in the sidebar for each text column
 for col in text_cols:
+    # Use session state to preserve filter values across page reruns
     if f"filter_{col}" not in st.session_state: st.session_state[f"filter_{col}"] = ""
-    st.session_state[f"filter_{col}"] = st.sidebar.text_input(col.replace("_"," ").title(), value=st.session_state[f"filter_{col}"], key=f"input_{col}")
+    st.session_state[f"filter_{col}"] = st.sidebar.text_input(
+        col.replace("_"," ").title(), # Generate label from column name
+        value=st.session_state[f"filter_{col}"],
+        key=f"input_{col}" # Unique key for each input widget
+    )
+    # If the input field is not empty, add it to the API parameters
     if st.session_state[f"filter_{col}"]: params[col] = st.session_state[f"filter_{col}"]
-# Date inputs
+
+# --- Date input filters ---
+# List of database columns that accept date filtering
 date_fields = ["published_date", "date_tagged", "last_synced_at", "updated_at"]
+# Create date input fields in the sidebar
 for col in date_fields:
      if f"filter_{col}" not in st.session_state: st.session_state[f"filter_{col}"] = None
      current_val = None
+     # Attempt to convert stored ISO date string back to a date object for the widget
      if st.session_state[f"filter_{col}"] is not None:
          try: current_val = date.fromisoformat(st.session_state[f"filter_{col}"])
-         except: current_val = None
+         except: current_val = None # Reset if conversion fails
+     # Create the date input widget
      d = st.sidebar.date_input(col.replace("_"," ").title(), value=current_val, key=f"input_{col}")
+     # If a date is selected, store it in ISO format for the API call and session state
      if d: params[col], st.session_state[f"filter_{col}"] = d.isoformat(), d.isoformat()
-     else: st.session_state[f"filter_{col}"] = None
-# List inputs
-list_cols = ["additional_keywords", "ders", "utility_reform", "customer_classes", "energy_resources", "related_documents", "relationship_types"]
+     else: st.session_state[f"filter_{col}"] = None # Store None if cleared
+
+# --- List input filters (comma-separated text) ---
+# List of database columns that accept list/array filtering (input as comma-separated string)
+list_cols = [
+    "additional_keywords", "ders", "utility_reform", "customer_classes",
+    "energy_resources", "related_documents", "relationship_types"
+]
+# Create text input fields for comma-separated list values
 for col in list_cols:
     if f"filter_{col}" not in st.session_state: st.session_state[f"filter_{col}"] = ""
-    st.session_state[f"filter_{col}"] = st.sidebar.text_input(col.replace("_"," ").title() + " (comma-sep)", value=st.session_state[f"filter_{col}"], key=f"input_{col}")
+    st.session_state[f"filter_{col}"] = st.sidebar.text_input(
+        col.replace("_"," ").title() + " (comma-sep)",
+        value=st.session_state[f"filter_{col}"],
+        key=f"input_{col}"
+    )
     s = st.session_state[f"filter_{col}"]
+    # If input is not empty, split by comma, strip whitespace, and add to API parameters as a list
     if s: params[col] = [x.strip() for x in s.split(",") if x.strip()]
-# Boolean input
+
+# --- Boolean input filter ---
+# Create a checkbox for the boolean filter
 if f"filter_physical_climate_risk" not in st.session_state: st.session_state[f"filter_physical_climate_risk"] = False
-st.session_state[f"filter_physical_climate_risk"] = st.sidebar.checkbox("Physical Climate Risk", value=st.session_state[f"filter_physical_climate_risk"], key="input_physical_climate_risk")
+st.session_state[f"filter_physical_climate_risk"] = st.sidebar.checkbox(
+    "Physical Climate Risk",
+    value=st.session_state[f"filter_physical_climate_risk"],
+    key="input_physical_climate_risk"
+)
+# If checked, add the parameter to the API call
 if st.session_state[f"filter_physical_climate_risk"]: params["physical_climate_risk"] = True
-# Pagination & Options
+
+# --- Pagination & Options ---
 st.sidebar.header("Options")
+# Initialize pagination settings in session state if they don't exist
 if 'page' not in st.session_state: st.session_state.page = 1
 if 'page_size' not in st.session_state: st.session_state.page_size = 20
+# Create number input widgets for page number and size
 st.session_state.page = st.sidebar.number_input("Page Number", min_value=1, value=st.session_state.page, key="input_page")
 st.session_state.page_size = st.sidebar.number_input("Page Size", min_value=1, max_value=200, value=st.session_state.page_size, key="input_page_size")
+# Add pagination parameters to the API call
 params["page"], params["page_size"] = st.session_state.page, st.session_state.page_size
-# Load Button
+
+# --- Load Button ---
+# Button to trigger the API call and data loading
 load_button_pressed = st.sidebar.button("Load Documents", type="primary")
 
 # ─── Main Area with Tabs ───────────────────────────────────────────────────────
+# Define the main tabs for the application interface
 about_tab, search_basic_tab, search_advanced_tab, tags_tab = st.tabs([
     "ℹ️ About CAIRN",
-    "🔍 Search (Basic)", # Updated Tab Name
-    "🔬 Search (Advanced)", # Updated Tab Name
-    "🏷️ Tag Definitions"
+    "🔍 Search (Basic)", # Basic search view tab
+    "🔬 Search (Advanced)", # Advanced search view tab
+    "🏷️ Tag Definitions" # Tab explaining metadata fields
 ])
 
 # --- Common Data Loading Logic ---
-# This runs only when the button is pressed, updating session state
+# This section runs only when the "Load Documents" button is pressed.
+# It fetches data from the API and updates the session state.
 if load_button_pressed:
-    with st.spinner('Fetching documents from CAIRN API...'):
+    with st.spinner('Fetching documents from CAIRN API...'): # Show loading spinner
         try:
+            # Make the GET request to the backend API
             resp = requests.get(f"{API_URL}/documents", params=params, headers=AUTH_HEADERS, timeout=45)
-            resp.raise_for_status()
-            docs_data = resp.json()
+            resp.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+            docs_data = resp.json() # Parse the JSON response
+
+            # Extract data and pagination info from the response
             docs = docs_data.get("data", [])
             st.session_state.total_docs = docs_data.get("total_count", len(docs))
             st.session_state.current_page_for_display = params.get('page', 1)
             page_size = params.get('page_size', 20)
             st.session_state.total_pages = (st.session_state.total_docs + page_size - 1) // page_size if st.session_state.total_docs > 0 else 1
 
+            # Handle the case where no documents are found
             if not docs:
-                st.session_state.search_results_df = pd.DataFrame()
-                st.session_state.api_error = None
-                st.session_state.data_message = "No documents found matching your criteria."
+                st.session_state.search_results_df = pd.DataFrame() # Clear previous results
+                st.session_state.api_error = None # Clear previous errors
+                st.session_state.data_message = "No documents found matching your criteria." # Set message
             else:
+                # Process the received documents into a pandas DataFrame
                 df = pd.DataFrame(docs)
+                # Critical check: Ensure the primary key 'id' column is present
                 if 'id' not in df.columns:
                      st.session_state.search_results_df = pd.DataFrame()
                      st.session_state.api_error = "Critical Error: 'id' column missing from API response. Downloads will fail."
                      st.session_state.data_message = None
                 else:
+                    # Flatten list-type columns into comma-separated strings for display
                     for lc in list_cols:
                         if lc in df.columns: df[lc] = df[lc].apply(lambda x: ", ".join(map(str, x)) if isinstance(x, list) else x)
 
+                    # Define mapping from database column names to user-friendly display names
                     rename_map = {
-                         "id": "PK_ID", "document_id": "File ID", "local_backup_name": "Local Backup Name",
-                         "document_title": "Document Title", "published_date": "Published Date",
-                         "document_author": "Document Author", "org_utility_name": "Org/Utility Name",
-                         "docket_number": "Docket Number", "document_type": "Document Type",
-                         "document_subtype": "Document Subtype", "document_url": "Document URL",
-                         "cairn_url": "CAIRN URL", "rate_impact": "Rate Impact",
-                         "utility_reform": "Utility Reform", "energy_resources": "Energy Resources",
-                         "customer_classes": "Customer Classes", "ders": "DERs",
+                         "id": "PK_ID", # Internal Primary Key - will be hidden
+                         "document_id":        "File ID",
+                         "local_backup_name":  "Local Backup Name",
+                         "document_title":     "Document Title",
+                         "published_date":     "Published Date",
+                         "document_author":    "Document Author", # Assuming this column exists in API response
+                         "org_utility_name":   "Org/Utility Name",
+                         "docket_number":      "Docket Number",
+                         "document_type":      "Document Type",
+                         "document_subtype":   "Document Subtype",
+                         "document_url":       "Document URL",
+                         "cairn_url":          "CAIRN URL",
+                         "rate_impact":        "Rate Impact",
+                         "utility_reform":     "Utility Reform",
+                         "energy_resources":   "Energy Resources",
+                         "customer_classes":   "Customer Classes",
+                         "ders":               "DERs",
                          "physical_climate_risk": "Physical Climate Risk",
-                         "additional_keywords": "Additional Keywords", "tagger": "Tagger",
-                         "date_tagged": "Date Tagged", "quality_check": "Quality Check",
-                         "processing_notes": "Processing Notes", "state_region": "State/Region",
-                         "regulatory_body": "Regulatory Body", "jurisdiction_type": "Jurisdiction Type",
-                         "parent_document": "Parent Document", "related_documents": "Related Documents",
-                         "replaces_document": "Replaces Document", "relationship_types": "Relationship Types",
+                         "additional_keywords": "Additional Keywords",
+                         "tagger":             "Tagger",
+                         "date_tagged":        "Date Tagged",
+                         "quality_check":      "Quality Check",
+                         "processing_notes":   "Processing Notes",
+                         "state_region":       "State/Region",
+                         "regulatory_body":    "Regulatory Body",
+                         "jurisdiction_type":  "Jurisdiction Type",
+                         "parent_document":    "Parent Document",
+                         "related_documents":  "Related Documents",
+                         "replaces_document":  "Replaces Document",
+                         "relationship_types": "Relationship Types",
                     }
+                    # Select all columns defined in the rename map that are present in the DataFrame
                     all_possible_cols = list(rename_map.keys())
                     cols_in_df = [col for col in all_possible_cols if col in df.columns]
                     df_processed = df[cols_in_df]
+                    # Apply the renaming
                     df_renamed = df_processed.rename(columns=rename_map)
+                    # Store the final processed DataFrame in session state
                     st.session_state.search_results_df = df_renamed
+                    # Clear any previous error/data messages
                     st.session_state.api_error = None
                     st.session_state.data_message = None
 
+        # Handle API request errors
         except requests.exceptions.RequestException as e:
-            st.session_state.search_results_df = pd.DataFrame()
-            st.session_state.api_error = f"API Request Failed: {e}"
+            st.session_state.search_results_df = pd.DataFrame() # Clear data
+            st.session_state.api_error = f"API Request Failed: {e}" # Store error message
             st.session_state.data_message = None
+        # Handle other potential errors during data processing
         except Exception as e:
-            st.session_state.search_results_df = pd.DataFrame()
-            st.session_state.api_error = f"An error occurred while processing data: {e}"
+            st.session_state.search_results_df = pd.DataFrame() # Clear data
+            st.session_state.api_error = f"An error occurred while processing data: {e}" # Store error message
             st.session_state.data_message = None
+            # Optionally log full traceback for debugging (not shown in UI)
+            # import traceback
+            # print(traceback.format_exc())
 
 
 # --- Tab Implementations ---
 
+# --- About Tab ---
 with about_tab:
-    # --- Full About Content ---
+    # Full content for the About page
     st.markdown("""
     ## What is CAIRN?
 
@@ -183,7 +273,7 @@ with about_tab:
 
     1.  **Stores Documents:** Collects and storing documents in a single shared database (using Backblaze B2).
     2.  **Organizes & Tags:** Uses humans and AI (via Supabase/PostgreSQL and Google Sheets integration) to categorize documents by utility, topic, date, document type, and other key factors. See the **🏷️ Tag Definitions** tab for details on searchable fields.
-    3.  **Enables Targeted Search:** Allows you to filter and search the database (using the **🔍 Search Documents** tabs!) to find precisely the documents you need. *(Roadmap includes semantic search and RAG)*.
+    3.  **Enables Targeted Search:** Allows you to filter and search the database (using the **🔍 Search (Basic)** or **🔬 Search (Advanced)** tabs!) to find precisely the documents you need. *(Roadmap includes semantic search and RAG)*.
 
     By streamlining access to this information, CAIRN aims to help environmental advocates, utility planners, regulatory analysts, researchers, and concerned citizens understand the landscape, track progress, compare approaches, and contribute more effectively to shaping our energy future.
 
@@ -200,92 +290,130 @@ with about_tab:
 with search_basic_tab:
     st.info("Basic search view. Use sidebar filters and click 'Load Documents'. Select a single row to enable download.")
 
-    # Display error messages if any occurred during fetch
+    # Display error or data messages from session state if they exist
     if st.session_state.get('api_error'): st.error(st.session_state.api_error)
     if st.session_state.get('data_message'): st.warning(st.session_state.data_message)
 
-    # Display results if available in session state
+    # Display results grid and actions only if data exists in session state
     if 'search_results_df' in st.session_state and not st.session_state.search_results_df.empty:
+        # Display pagination info
         st.write(f"Showing **{len(st.session_state.search_results_df)}** of **{st.session_state.total_docs}** total documents (Page {st.session_state.current_page_for_display} of {st.session_state.total_pages})")
 
-        cols_to_display_basic = ["PK_ID"] + BASIC_COLUMNS_TO_SHOW # PK_ID needed for actions
+        # Prepare the DataFrame view for the basic tab
+        cols_to_display_basic = ["PK_ID"] + BASIC_COLUMNS_TO_SHOW # PK_ID needed internally
         df_basic_view = st.session_state.search_results_df[[col for col in cols_to_display_basic if col in st.session_state.search_results_df.columns]]
 
+        # Quick Search input specific to this tab
         search_term_basic = st.text_input("🔎 Quick Search basic results", key="quick_search_input_basic")
         df_display_basic = df_basic_view
+        # Apply quick search filter if a term is entered
         if search_term_basic:
             mask = df_display_basic.apply(lambda row: row.astype(str).str.contains(search_term_basic, case=False, na=False).any(), axis=1)
             df_display_basic = df_display_basic[mask]
             if not df_display_basic.empty: st.write(f"Showing {len(df_display_basic)} rows matching quick search.")
 
+        # Display the grid only if there's data after potential quick search filtering
         if not df_display_basic.empty:
+            # Configure AgGrid options for the basic view
             gb_basic = GridOptionsBuilder.from_dataframe(df_display_basic)
             gb_basic.configure_default_column(sortable=True, resizable=True, wrapText=True, autoHeight=True, minWidth=150, filter=True, floatingFilter=True)
-            gb_basic.configure_column("PK_ID", hide=True)
-            gb_basic.configure_side_bar(filters_panel=False, columns_panel=True)
+            gb_basic.configure_column("PK_ID", hide=True) # Hide the internal primary key
+            gb_basic.configure_side_bar(filters_panel=False, columns_panel=True) # Keep columns panel, hide filters panel
             gb_basic.configure_pagination(paginationAutoPageSize=False, paginationPageSize=st.session_state.page_size)
             gb_basic.configure_selection(selection_mode="multiple", use_checkbox=True, header_checkbox=True)
-            gb_basic.configure_grid_options(domLayout='normal') # Removed getRowId here, adding below
+            gb_basic.configure_grid_options(domLayout='normal') # Standard layout
             grid_opts_basic = gb_basic.build()
 
-            # *** FIX for Selection: Add getRowId using JsCode ***
+            # ** FIX for Selection: Define and add getRowId using JsCode **
+            # This tells AgGrid how to uniquely identify each row using the PK_ID column
             get_row_id_basic = JsCode("""function(params) { return params.data.PK_ID; }""")
             grid_opts_basic['getRowId'] = get_row_id_basic
 
+            # Display the AgGrid component for the basic view
             grid_response_basic = AgGrid(
-                df_display_basic, gridOptions=grid_opts_basic, key='document_grid_basic',
-                height=600, width='100%', columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
-                update_mode=GridUpdateMode.SELECTION_CHANGED, data_return_mode=DataReturnMode.AS_INPUT,
-                allow_unsafe_jscode=True, enable_enterprise_modules=False, reload_data=False
+                df_display_basic,
+                gridOptions=grid_opts_basic,
+                key='document_grid_basic', # Unique key for this grid instance
+                height=600, width='100%',
+                columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS, # Adjust column widths
+                update_mode=GridUpdateMode.SELECTION_CHANGED, # Update when selection changes
+                data_return_mode=DataReturnMode.AS_INPUT, # Return data in original format
+                allow_unsafe_jscode=True, # Required for JsCode and cell renderers
+                enable_enterprise_modules=False,
+                reload_data=False # ** FIX for Selection: Avoid unnecessary reloads **
             )
 
             # --- Actions Area Below Basic Grid ---
-            st.markdown("---")
+            st.markdown("---") # Separator
+            # CSV Download button (always available if grid has data)
             csv_data_basic = df_display_basic.to_csv(index=False).encode('utf-8')
             st.download_button(label="📄 Download Basic View as CSV", data=csv_data_basic, file_name="cairn_basic_export.csv", mime="text/csv", key='csv_download_basic')
-            st.markdown("---")
+            st.markdown("---") # Separator
 
+            # Get selected rows from the grid response
             selected_rows_basic = grid_response_basic.get("selected_rows")
+            # Define columns for selection-dependent actions and details
             col_act_basic_1, col_act_basic_2 = st.columns([1, 3])
 
-            with col_act_basic_1:
+            with col_act_basic_1: # Column for download buttons
+                # Check if selection is valid (list and not empty)
                 if selected_rows_basic and isinstance(selected_rows_basic, list):
                     num_selected = len(selected_rows_basic)
+                    # --- Single Selection Download Button ---
                     if num_selected == 1:
-                        selected_doc = selected_rows_basic[0]; doc_pk_id = selected_doc.get('PK_ID')
+                        selected_doc = selected_rows_basic[0]
+                        doc_pk_id = selected_doc.get('PK_ID') # Get the primary key
                         doc_title = selected_doc.get('Document Title', f'File ID {selected_doc.get("File ID", doc_pk_id)}')
+                        # Display button only if PK_ID is found
                         if doc_pk_id:
                             button_label = f"⬇️ Download Selected: {doc_title[:40]}..."
-                            button_key = f"download_single_basic_{doc_pk_id}"
+                            button_key = f"download_single_basic_{doc_pk_id}" # Unique key per document
+                            # If the download button is clicked
                             if st.button(button_label, key=button_key):
                                 download_url_endpoint = f"{API_URL}/documents/{doc_pk_id}/download-url"
                                 try:
+                                    # Show spinner while fetching URL
                                     with st.spinner(f"Generating link..."):
-                                        dl_resp = requests.get(download_url_endpoint, headers=AUTH_HEADERS, timeout=20); dl_resp.raise_for_status()
+                                        dl_resp = requests.get(download_url_endpoint, headers=AUTH_HEADERS, timeout=20)
+                                        dl_resp.raise_for_status() # Check for API errors
                                         url = dl_resp.json().get("url")
+                                        # If URL received, store it in session state to display after rerun
                                         if url: st.session_state[f'download_link_basic_{doc_pk_id}'] = url
                                         else: st.error("Invalid link returned."); st.session_state.pop(f'download_link_basic_{doc_pk_id}', None)
+                                # Handle specific HTTP errors from API
                                 except requests.exceptions.HTTPError as http_err:
                                      detail = f"Server error ({http_err.response.status_code})"; try: detail = http_err.response.json().get('detail', detail); except: pass
                                      st.error(f"Download Failed: {detail}"); st.session_state.pop(f'download_link_basic_{doc_pk_id}', None)
+                                # Handle other request errors (network, timeout)
+                                except requests.exceptions.RequestException as req_err:
+                                    st.error(f"Network Error: {req_err}"); st.session_state.pop(f'download_link_basic_{doc_pk_id}', None)
+                                # Handle any other unexpected errors
                                 except Exception as e: st.error(f"Error: {e}"); st.session_state.pop(f'download_link_basic_{doc_pk_id}', None)
 
-                            link_key = f'download_link_basic_{doc_pk_id}'
+                            # Display the download link if it was generated and stored in session state
+                            link_key = f'download_link_basic_{doc_pk_id}' # Unique key for the link state
                             if st.session_state.get(link_key):
                                 link = st.session_state.get(link_key)
                                 st.markdown(f'✅ Link ready: <a href="{link}" target="_blank" download>Click here to download "{doc_title[:50]}..."</a>', unsafe_allow_html=True)
-                                del st.session_state[link_key]
-                    elif num_selected > 1:
-                        st.button(f"⬇️ Download {num_selected} Selected as ZIP", key="download_selected_zip_basic", disabled=True); st.caption("(ZIP download not implemented)")
+                                del st.session_state[link_key] # Clear the state after displaying the link
 
-            with col_act_basic_2:
+                    # --- Multiple Selection Placeholder ---
+                    elif num_selected > 1:
+                        st.button(f"⬇️ Download {num_selected} Selected as ZIP", key="download_selected_zip_basic", disabled=True)
+                        st.caption("(ZIP download not yet implemented)")
+
+            with col_act_basic_2: # Column for displaying details of selected rows
+                 # Check if selection is valid
                  if selected_rows_basic and isinstance(selected_rows_basic, list) and len(selected_rows_basic) > 0:
                      st.markdown("#### Selected Document Details")
                      try:
+                        # Create DataFrame from selected rows, remove AgGrid internal info
                         sel_df = pd.DataFrame(selected_rows_basic).drop(columns=["_selectedRowNodeInfo"], errors="ignore")
-                        if len(sel_df) == 1: st.dataframe(sel_df.iloc[0], use_container_width=True)
-                        else: st.dataframe(sel_df, use_container_width=True, height=200)
+                        # Display differently based on number selected
+                        if len(sel_df) == 1: st.dataframe(sel_df.iloc[0], use_container_width=True) # Single row transposed
+                        else: st.dataframe(sel_df, use_container_width=True, height=200) # Multiple rows as table
                      except Exception as detail_e: st.error(f"Error displaying details: {detail_e}")
+        # Message if quick search filtered out all results
         else:
              if search_term_basic: st.caption("No results match the quick search term in this view.")
 
@@ -294,70 +422,93 @@ with search_basic_tab:
 with search_advanced_tab:
     st.info("Advanced search view with all columns. Use sidebar filters and click 'Load Documents'. Select a single row to enable download.")
 
-    # Display error messages if any occurred during fetch
+    # Display error or data messages from session state
     if st.session_state.get('api_error'): st.error(st.session_state.api_error)
     if st.session_state.get('data_message'): st.warning(st.session_state.data_message)
 
-    # Display results if available in session state
+    # Display results grid and actions only if data exists in session state
     if 'search_results_df' in st.session_state and not st.session_state.search_results_df.empty:
+        # Display pagination info
         st.write(f"Showing **{len(st.session_state.search_results_df)}** of **{st.session_state.total_docs}** total documents (Page {st.session_state.current_page_for_display} of {st.session_state.total_pages})")
 
-        df_advanced_view = st.session_state.search_results_df # Use full DataFrame
+        # Use the full DataFrame for the advanced view
+        df_advanced_view = st.session_state.search_results_df
 
+        # Quick Search input specific to this tab
         search_term_advanced = st.text_input("🔎 Quick Search advanced results", key="quick_search_input_advanced")
         df_display_advanced = df_advanced_view
+        # Apply quick search filter
         if search_term_advanced:
             mask = df_display_advanced.apply(lambda row: row.astype(str).str.contains(search_term_advanced, case=False, na=False).any(), axis=1)
             df_display_advanced = df_display_advanced[mask]
             if not df_display_advanced.empty: st.write(f"Showing {len(df_display_advanced)} rows matching quick search.")
 
+        # Display grid only if data remains after filtering
         if not df_display_advanced.empty:
+            # Configure AgGrid options for the advanced view
             gb_advanced = GridOptionsBuilder.from_dataframe(df_display_advanced)
             gb_advanced.configure_default_column(sortable=True, resizable=True, wrapText=True, autoHeight=True, minWidth=150, filter=True, floatingFilter=True)
-            gb_advanced.configure_column("PK_ID", hide=True)
+            gb_advanced.configure_column("PK_ID", hide=True) # Hide internal primary key
+            # Configure clickable URLs if columns exist
             if "Document URL" in df_display_advanced.columns: gb_advanced.configure_column("Document URL", cellRenderer='''function(params) { return params.value ? '<a href="' + params.value + '" target="_blank" rel="noopener noreferrer">'+ params.value +'</a>' : ''; }''')
             if "CAIRN URL" in df_display_advanced.columns: gb_advanced.configure_column("CAIRN URL", cellRenderer='''function(params) { return params.value ? '<a href="' + params.value + '" target="_blank" rel="noopener noreferrer">'+ params.value +'</a>' : ''; }''')
-            gb_advanced.configure_side_bar(filters_panel=True, columns_panel=True)
+            gb_advanced.configure_side_bar(filters_panel=True, columns_panel=True) # Show both panels
             gb_advanced.configure_pagination(paginationAutoPageSize=False, paginationPageSize=st.session_state.page_size)
             gb_advanced.configure_selection(selection_mode="multiple", use_checkbox=True, header_checkbox=True)
-            gb_advanced.configure_grid_options(domLayout='normal') # Removed getRowId here, adding below
+            gb_advanced.configure_grid_options(domLayout='normal') # Standard layout
             grid_opts_advanced = gb_advanced.build()
 
-            # *** FIX for Selection: Add getRowId using JsCode ***
+            # ** FIX for Selection: Define and add getRowId using JsCode **
             get_row_id_advanced = JsCode("""function(params) { return params.data.PK_ID; }""")
             grid_opts_advanced['getRowId'] = get_row_id_advanced
 
+            # Display the AgGrid component for the advanced view
             grid_response_advanced = AgGrid(
-                df_display_advanced, gridOptions=grid_opts_advanced, key='document_grid_advanced',
-                height=600, width='100%', columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
-                update_mode=GridUpdateMode.SELECTION_CHANGED, data_return_mode=DataReturnMode.AS_INPUT,
-                allow_unsafe_jscode=True, enable_enterprise_modules=False, reload_data=False
+                df_display_advanced,
+                gridOptions=grid_opts_advanced,
+                key='document_grid_advanced', # Unique key for this grid
+                height=600, width='100%',
+                columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
+                update_mode=GridUpdateMode.SELECTION_CHANGED,
+                data_return_mode=DataReturnMode.AS_INPUT,
+                allow_unsafe_jscode=True,
+                enable_enterprise_modules=False,
+                reload_data=False # ** FIX for Selection: Avoid unnecessary reloads **
             )
 
             # --- Actions Area Below Advanced Grid ---
-            st.markdown("---")
+            st.markdown("---") # Separator
+            # CSV Download button
             csv_data_advanced = df_display_advanced.to_csv(index=False).encode('utf-8')
             st.download_button(label="📄 Download Advanced View as CSV", data=csv_data_advanced, file_name="cairn_advanced_export.csv", mime="text/csv", key='csv_download_advanced')
-            st.markdown("---")
+            st.markdown("---") # Separator
 
+            # Get selected rows
             selected_rows_advanced = grid_response_advanced.get("selected_rows")
+            # Define columns for actions/details
             col_act_adv_1, col_act_adv_2 = st.columns([1, 3])
 
-            with col_act_adv_1:
+            with col_act_adv_1: # Column for download buttons
+                # Check if selection is valid
                 if selected_rows_advanced and isinstance(selected_rows_advanced, list):
                     num_selected = len(selected_rows_advanced)
+                    # --- Single Selection Download Button ---
                     if num_selected == 1:
-                        selected_doc = selected_rows_advanced[0]; doc_pk_id = selected_doc.get('PK_ID')
+                        selected_doc = selected_rows_advanced[0]
+                        doc_pk_id = selected_doc.get('PK_ID')
                         doc_title = selected_doc.get('Document Title', f'File ID {selected_doc.get("File ID", doc_pk_id)}')
+                        # Display button only if PK_ID found
                         if doc_pk_id:
                             button_label = f"⬇️ Download Selected: {doc_title[:40]}..."
-                            button_key = f"download_single_advanced_{doc_pk_id}"
+                            button_key = f"download_single_advanced_{doc_pk_id}" # Unique key
+                            # If download button clicked
                             if st.button(button_label, key=button_key):
-                                # (Identical API call and error handling logic)
+                                # (Identical API call and error handling logic as basic tab)
                                 download_url_endpoint = f"{API_URL}/documents/{doc_pk_id}/download-url"
                                 try:
                                     with st.spinner(f"Generating link..."):
-                                        dl_resp = requests.get(download_url_endpoint, headers=AUTH_HEADERS, timeout=20); dl_resp.raise_for_status()
+                                        dl_resp = requests.get(download_url_endpoint, headers=AUTH_HEADERS, timeout=20)
+                                        dl_resp.raise_for_status()
                                         url = dl_resp.json().get("url")
                                         if url: st.session_state[f'download_link_advanced_{doc_pk_id}'] = url
                                         else: st.error("Invalid link returned."); st.session_state.pop(f'download_link_advanced_{doc_pk_id}', None)
@@ -366,22 +517,30 @@ with search_advanced_tab:
                                      st.error(f"Download Failed: {detail}"); st.session_state.pop(f'download_link_advanced_{doc_pk_id}', None)
                                 except Exception as e: st.error(f"Error: {e}"); st.session_state.pop(f'download_link_advanced_{doc_pk_id}', None)
 
-                            link_key = f'download_link_advanced_{doc_pk_id}'
+                            # Display download link if generated
+                            link_key = f'download_link_advanced_{doc_pk_id}' # Unique key
                             if st.session_state.get(link_key):
                                 link = st.session_state.get(link_key)
                                 st.markdown(f'✅ Link ready: <a href="{link}" target="_blank" download>Click here to download "{doc_title[:50]}..."</a>', unsafe_allow_html=True)
-                                del st.session_state[link_key]
-                    elif num_selected > 1:
-                        st.button(f"⬇️ Download {num_selected} Selected as ZIP", key="download_selected_zip_advanced", disabled=True); st.caption("(ZIP download not implemented)")
+                                del st.session_state[link_key] # Clear after display
 
-            with col_act_adv_2:
+                    # --- Multiple Selection Placeholder ---
+                    elif num_selected > 1:
+                        st.button(f"⬇️ Download {num_selected} Selected as ZIP", key="download_selected_zip_advanced", disabled=True)
+                        st.caption("(ZIP download not yet implemented)")
+
+            with col_act_adv_2: # Column for displaying details
+                 # Check if selection is valid
                  if selected_rows_advanced and isinstance(selected_rows_advanced, list) and len(selected_rows_advanced) > 0:
                      st.markdown("#### Selected Document Details")
                      try:
+                        # Create DataFrame, remove AgGrid info
                         sel_df = pd.DataFrame(selected_rows_advanced).drop(columns=["_selectedRowNodeInfo"], errors="ignore")
+                        # Display differently based on count
                         if len(sel_df) == 1: st.dataframe(sel_df.iloc[0], use_container_width=True)
                         else: st.dataframe(sel_df, use_container_width=True, height=200)
                      except Exception as detail_e: st.error(f"Error displaying details: {detail_e}")
+        # Message if quick search filtered out all results
         else:
              if search_term_advanced: st.caption("No results match the quick search term in this view.")
 
@@ -401,8 +560,8 @@ with tags_tab:
             "Rate Impact", "Utility Reform", "Energy Resources", "Customer Classes", "DERs",
             "Physical Climate Risk", "Additional Keywords", "Tagger", "Date Tagged", "Quality Check",
             "Processing Notes", "State/Region", "Regulatory Body", "Jurisdiction Type",
-            "Parent Document", "Related Documents", "Replaces Document", "Relationship Types"
-            # ,"Document Author" # Uncomment if needed
+            "Parent Document", "Related Documents", "Replaces Document", "Relationship Types",
+            "Document Author" # Added Document Author based on rename map
         ],
         'Description': [
             "Unique identifier for the document record (e.g., C250001)",
@@ -431,8 +590,8 @@ with tags_tab:
             "The File ID of a parent document this document belongs to (e.g., for appendices)",
             "Comma-separated File IDs of other documents related to this one",
             "The File ID of a document that this document replaces or supersedes",
-            "Describes the relationship to parent/related documents (e.g., Appendix, Comment)"
-            # ,"The individual, firm, or entity that authored the document"
+            "Describes the relationship to parent/related documents (e.g., Appendix, Comment)",
+            "The individual, firm, or entity that authored the document" # Added description
         ],
          'Common Examples / Format': [
              "CYY##### format (e.g., C250001)", "Text", "YYYY-MM-DD", "PSE, Avista, PGE, CAISO, PNNL",
@@ -445,20 +604,24 @@ with tags_tab:
              "Text (e.g., OCR issues found)", "WA, CA, OR, Multi-state, National",
              "WA_UTC, Oregon PUC, CAISO, FERC, CPUC", "State-Level, National, Regional",
              "CYY##### format (e.g., C250002)", "CYY##### format (comma-sep)", "CYY##### format",
-             "Appendix, IRP_Comment, Staff_Comment, Errata"
-             # ,"Text"
+             "Appendix, IRP_Comment, Staff_Comment, Errata",
+             "Text" # Added format for Document Author
          ]
     }
 
-    # Create and display the DataFrame
+    # Create and display the DataFrame for tag definitions
     try:
-        tag_definitions_df = pd.DataFrame(tag_data)
-        st.dataframe(tag_definitions_df, use_container_width=True, height=600)
-    except ValueError as ve:
-        st.error(f"Error creating Tag Definitions table: {ve}. Check lists in tag_data dictionary.")
+        # Check if lists have the same length before creating DataFrame
+        list_lengths = {key: len(value) for key, value in tag_data.items()}
+        if len(set(list_lengths.values())) > 1: # Check if all lengths are the same
+            st.error(f"Error creating Tag Definitions table: Lists have different lengths. {list_lengths}")
+        else:
+            tag_definitions_df = pd.DataFrame(tag_data)
+            st.dataframe(tag_definitions_df, use_container_width=True, height=600)
     except Exception as e:
          st.error(f"An unexpected error occurred displaying Tag Definitions: {e}")
 
 # Optional Footer
 # st.markdown("---")
 # st.caption("CAIRN Project v1.4 | Powered by Streamlit")
+
