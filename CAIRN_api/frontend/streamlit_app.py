@@ -413,14 +413,98 @@ with search_advanced_tab:
 
 
 # --- Tags Tab ---
+# --- Tags Tab ---
 with tags_tab:
-    # (Keep existing Tag Definitions content)
-    st.info("...") # Truncated for brevity
-    tag_data = { # Assuming this is defined correctly as before
-        'Tag Name (Filter)': [...], 'Description': [...], 'Common Examples / Format': [...]
+    st.info("""
+    This table explains the different fields (tags) used to categorize documents in CAIRN.
+    You can use the filters in the sidebar (under the search tabs) to search based on these fields and terms.
+    """)
+
+    # Define the COMPLETE tag data without using '...' ellipsis placeholders
+    tag_data = {
+        'Tag Name (Filter)': [
+            "File ID", "Document Title", "Published Date", "Org/Utility Name",
+            "Docket Number", "Document Type", "Document Subtype", "Document URL", "CAIRN URL",
+            "Rate Impact", "Utility Reform", "Energy Resources", "Customer Classes", "DERs",
+            "Physical Climate Risk", "Additional Keywords", "Tagger", "Date Tagged", "Quality Check",
+            "Processing Notes", "State/Region", "Regulatory Body", "Jurisdiction Type",
+            "Parent Document", "Related Documents", "Replaces Document", "Relationship Types"
+            # Note: Added Document Author back based on some earlier definitions, remove if not applicable
+            # ,"Document Author"
+            # Note: Excluded 'Local Backup Name' and 'PK_ID' as they are likely internal use
+        ],
+        'Description': [
+            "Unique identifier for the document record (e.g., C250001)",
+            "Full official title of the document",
+            "The date the document was published or filed",
+            "The primary utility, organization, or agency associated with the document",
+            "The official proceeding number (e.g., UE-230810)",
+            "The main category or classification of the document",
+            "A more specific sub-category of the document",
+            "Direct URL link to the original source document webpage (if available)",
+            "Direct URL link to the document file stored within the CAIRN system (if available)", # Added clarification
+            "Does the document primarily discuss ratepayer bill or tariff impacts? (Yes/No/Partial)", # Updated example
+            "Does the document primarily focus on utility governance or business model changes? (Yes/No/Partial)",
+            "Comma-separated list of energy resource types discussed (e.g., gas, solar, storage, EE)",
+            "Comma-separated list of customer classes addressed (e.g., residential, C&I, low-income)",
+            "Does the document primarily focus on Distributed Energy Resources (DERs)? (Yes/No)", # Updated example
+            "Does the document primarily discuss physical climate risks like wildfire, heat, floods? (Yes/No)", # Updated example
+            "Comma-separated list of additional relevant keywords for searching",
+            "Identifier for the person or team who applied the tags",
+            "The date the tags were applied or last updated",
+            "Has the accuracy of the document's metadata been verified? (Complete/Pending/Needs Review)", # Updated example
+            "Internal notes regarding document processing, OCR issues, or anomalies",
+            "The primary geographic state or region the document pertains to",
+            "The primary regulatory agency with jurisdiction (e.g., PUC, FERC)",
+            "The level of regulatory authority (e.g., State-Level, National)",
+            "The File ID of a parent document this document belongs to (e.g., for appendices)",
+            "Comma-separated File IDs of other documents related to this one",
+            "The File ID of a document that this document replaces or supersedes",
+            "Describes the relationship to parent/related documents (e.g., Appendix, Comment)"
+            # ,"The individual, firm, or entity that authored the document" # Description for Document Author
+        ],
+         'Common Examples / Format': [
+             "CYY##### format (e.g., C250001)", # Added example
+             "Text",
+             "YYYY-MM-DD",
+             "PSE, Avista, PGE, CAISO, PNNL",
+             "UE-#####, UG-#####, etc.",
+             "IRP/ISP, Assessment, Comment, Report, Regulatory Rate Plan Order", # Expanded example
+             "Electric IRP, Gas IRP, Comment, Clean_Energy_Party, Integrated Resource Plan",
+             "URL",
+             "URL (May require login/access)", # Added clarification
+             "Yes, No, Partial", # Simpler examples
+             "Yes, No, Partial", # Simpler examples
+             "All, Gas, Solar, Storage, EE, Clean_Energy, Efficiency", # Added one
+             "All, Residential, C&I, Low-Income", # Added one
+             "Yes, No", # Simpler examples
+             "Yes, No", # Simpler examples
+             "IRP, Resilience, Decarbonization, MYRP, Wildfire", # Added one
+             "Text (e.g., Apples)",
+             "YYYY-MM-DD",
+             "Complete, Pending, Needs Review", # Match description
+             "Text (e.g., OCR issues found)", # Added example
+             "WA, CA, OR, Multi-state, National",
+             "WA_UTC, Oregon PUC, CAISO, FERC, CPUC",
+             "State-Level, National, Regional", # Added one
+             "CYY##### format (e.g., C250002)", # Added example
+             "CYY##### format (comma-sep)",
+             "CYY##### format",
+             "Appendix, IRP_Comment, Staff_Comment, Errata" # Added one
+             # ,"Text" # Format for Document Author
+         ]
     }
-    tag_definitions_df = pd.DataFrame(tag_data)
-    st.dataframe(tag_definitions_df, use_container_width=True, height=600)
+
+    # Create the DataFrame
+    try:
+        tag_definitions_df = pd.DataFrame(tag_data)
+        # Display the DataFrame
+        st.dataframe(tag_definitions_df, use_container_width=True, height=600)
+    except ValueError as ve:
+        st.error(f"Error creating Tag Definitions table: {ve}")
+        st.caption("This usually means the lists in the 'tag_data' dictionary in the code have different lengths.")
+    except Exception as e:
+         st.error(f"An unexpected error occurred displaying Tag Definitions: {e}")
 
 # Optional Footer
 # st.markdown("---")
