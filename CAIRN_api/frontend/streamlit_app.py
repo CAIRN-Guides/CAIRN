@@ -1,21 +1,12 @@
-**Analyzing TypeError**
 
-The error message likely means that `raw` is being treated as a string, which explains the TypeError. It seems that `grid.get("data")` typically returns a list of dictionaries, but it might occasionally return a JSON string. If `raw` is a string, iterating over it would yield characters rather than dictionaries. To fix this, we may need to parse it using `json.loads()`, but according to the docs, `grid.get("data")` should return a list. The tricky part is that some versions may still return the string.
-
-
-Thought for 7 seconds
-
-
-```python
 # frontend/streamlit_app.py
-# Full drop-in replacement code - v1.11.3 (Fix “string indices” bug by treating grid data as DataFrame)
+# Full drop-in replacement code - v1.11.3 (Fix “string indices” bug & replaced placeholder)
 
 import streamlit as st
 st.set_page_config(page_title="CAIRN Finder", layout="wide")  # ← must be first Streamlit call
 
 import os
 import io
-import json
 import requests
 import pandas as pd
 from dotenv import load_dotenv
@@ -30,7 +21,7 @@ except ImportError:
     try:
         from st_aggrid.grid_options_builder import JsCode
     except ImportError:
-        st.error("Could not import JsCode from streamlit‑aggrid. Please ensure streamlit‑aggrid is installed correctly.")
+        st.error("Could not import JsCode from streamlit-aggrid. Please ensure streamlit-aggrid is installed.")
         st.stop()
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, ColumnsAutoSizeMode
 
@@ -46,7 +37,7 @@ AUTH_HEADERS = {}
 if 'user_token' in st.session_state:
     AUTH_HEADERS = {"Authorization": f"Bearer {st.session_state['user_token']}"}
 
-# --- Helper functions ---------------------------------------------------------
+# --- Helpers ---------------------------------------------------------
 
 def handle_single_download(doc_pk_id, doc_title, tab_prefix):
     if not doc_pk_id or str(doc_pk_id).strip() == "":
@@ -59,7 +50,7 @@ def handle_single_download(doc_pk_id, doc_title, tab_prefix):
 
     if link_key in st.session_state:
         info = st.session_state.pop(link_key)
-        url = info.get("url"); fn = info.get("filename")
+        url, fn = info.get("url"), info.get("filename")
         fname_attr = f'download="{fn}"' if fn else "download"
         st.markdown(
             f'✅ Link ready: <a href="{url}" target="_blank" {fname_attr}>'
@@ -78,7 +69,7 @@ def handle_single_download(doc_pk_id, doc_title, tab_prefix):
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                url = data.get("url"); fn = data.get("filename")
+                url, fn = data.get("url"), data.get("filename")
                 if url:
                     st.session_state[link_key] = {"url": url, "filename": fn}
                     st.rerun()
@@ -146,10 +137,10 @@ params = {}
 
 # Text filters
 text_cols = [
-    "document_id", "document_title", "local_backup_name", "tagger", "file_format",
-    "rate_impact", "quality_check", "regulatory_body", "state_region", "docket_number",
-    "document_type", "org_utility_name", "parent_document", "replaces_document",
-    "document_url", "cairn_url", "processing_notes"
+    "document_id","document_title","local_backup_name","tagger","file_format",
+    "rate_impact","quality_check","regulatory_body","state_region","docket_number",
+    "document_type","org_utility_name","parent_document","replaces_document",
+    "document_url","cairn_url","processing_notes"
 ]
 for col in text_cols:
     key = f"filter_{col}"
@@ -168,15 +159,15 @@ date_fields = ["published_date","date_tagged","last_synced_at","updated_at"]
 for col in date_fields:
     key = f"filter_{col}"
     st.session_state.setdefault(key, None)
-    current = None
+    curr = None
     if st.session_state[key]:
         try:
-            current = date.fromisoformat(st.session_state[key])
+            curr = date.fromisoformat(st.session_state[key])
         except:
             pass
     d = st.sidebar.date_input(
         col.replace("_"," ").title(),
-        value=current,
+        value=curr,
         key=f"input_{col}"
     )
     if d:
@@ -224,12 +215,12 @@ st.session_state.page_size = st.sidebar.number_input(
     "Page Size", min_value=1, max_value=200,
     value=st.session_state.page_size, key="input_page_size"
 )
-params["page"] = st.session_state.page
+params["page"]      = st.session_state.page
 params["page_size"] = st.session_state.page_size
 
 load_button_pressed = st.sidebar.button("Load Documents", type="primary")
 
-# ─── Main Tabs ────────────────────────────────────────────────────────────────
+# ─── Tabs ─────────────────────────────────────────────────────────────────────
 about_tab, basic_tab, advanced_tab, tags_tab = st.tabs([
     "ℹ️ About CAIRN",
     "🔍 Search (Basic)",
@@ -241,18 +232,16 @@ about_tab, basic_tab, advanced_tab, tags_tab = st.tabs([
 if load_button_pressed:
     with st.spinner("Fetching documents from CAIRN API..."):
         try:
-            resp = requests.get(
-                f"{API_URL}/documents",
-                params=params,
-                headers=AUTH_HEADERS,
-                timeout=API_TIMEOUT_SECONDS
-            )
+            resp = requests.get(f"{API_URL}/documents",
+                                params=params,
+                                headers=AUTH_HEADERS,
+                                timeout=API_TIMEOUT_SECONDS)
             resp.raise_for_status()
             payload = resp.json()
             docs = payload.get("data", [])
-            st.session_state.total_docs = payload.get("total_count", len(docs))
-            st.session_state.current_page_for_display = params.get("page", 1)
-            page_size = params.get("page_size", 20)
+            st.session_state.total_docs                = payload.get("total_count", len(docs))
+            st.session_state.current_page_for_display   = params.get("page",1)
+            page_size = params.get("page_size",20)
             st.session_state.total_pages = (
                 (st.session_state.total_docs + page_size - 1)//page_size
                 if st.session_state.total_docs>0 else 1
@@ -260,22 +249,22 @@ if load_button_pressed:
 
             if not docs:
                 st.session_state.search_results_df = pd.DataFrame()
-                st.session_state.api_error = None
-                st.session_state.data_message = "No documents found matching your criteria."
+                st.session_state.api_error        = None
+                st.session_state.data_message     = "No documents found matching your criteria."
             else:
                 df = pd.DataFrame(docs)
                 if 'id' not in df.columns:
                     st.session_state.search_results_df = pd.DataFrame()
-                    st.session_state.api_error = "Critical Error: 'id' missing from API."
+                    st.session_state.api_error        = "Critical Error: 'id' missing from API."
                     st.error(st.session_state.api_error)
                 else:
-                    # flatten list columns
+                    # flatten list fields
                     for lc in list_cols:
                         if lc in df.columns:
-                            df[lc] = df[lc].apply(lambda x: ", ".join(map(str, x)) if isinstance(x, list) else x)
-                    # rename
+                            df[lc] = df[lc].apply(lambda x: ", ".join(map(str,x)) if isinstance(x,list) else x)
+                    # rename fields
                     rename_map = {
-                        "id":"PK_ID", "document_id":"File ID", "local_backup_name":"Local Backup Name",
+                        "id":"PK_ID","document_id":"File ID","local_backup_name":"Local Backup Name",
                         "document_title":"Document Title","published_date":"Published Date",
                         "org_utility_name":"Org/Utility Name","docket_number":"Docket Number",
                         "document_type":"Document Type","document_subtype":"Document Subtype",
@@ -294,37 +283,39 @@ if load_button_pressed:
                     }
                     cols = [c for c in rename_map if c in df.columns]
                     df = df[cols].rename(columns=rename_map)
+
                     if 'PK_ID' not in df.columns or df['PK_ID'].isnull().any():
                         st.session_state.search_results_df = pd.DataFrame()
-                        st.session_state.api_error = "Critical Error: PK_ID issue."
+                        st.session_state.api_error        = "Critical Error: PK_ID issue."
                         st.error(st.session_state.api_error)
                     else:
                         df['PK_ID'] = df['PK_ID'].astype(str)
                         st.session_state.search_results_df = df
-                        st.session_state.api_error = None
-                        st.session_state.data_message = None
+                        st.session_state.api_error        = None
+                        st.session_state.data_message     = None
         except Exception as e:
             st.session_state.search_results_df = pd.DataFrame()
-            st.session_state.api_error = f"API Request Failed: {e}"
-            st.session_state.data_message = None
+            st.session_state.api_error        = f"API Request Failed: {e}"
+            st.session_state.data_message     = None
 
 # ─── About Tab ────────────────────────────────────────────────────────────────
 with about_tab:
-    st.markdown("## What is CAIRN?\n…")
+    st.markdown("""
+    ## What is CAIRN?
+    ... [Your About content here] ...
+    """)
 
 # ─── Basic Search Tab ─────────────────────────────────────────────────────────
 with basic_tab:
     st.info("Basic search view. Use sidebar filters and click 'Load Documents'.")
-    if st.session_state.get('api_error'):
-        st.error(st.session_state.api_error)
-    if st.session_state.get('data_message'):
-        st.warning(st.session_state.data_message)
+    if st.session_state.get('api_error'):    st.error(st.session_state.api_error)
+    if st.session_state.get('data_message'): st.warning(st.session_state.data_message)
 
     df_basic = st.session_state.get('search_results_df', pd.DataFrame())
     if not df_basic.empty:
         st.write(
-            f"Showing **{len(df_basic)}** of **{st.session_state.total_docs}** "
-            f"documents (Page {st.session_state.current_page_for_display} of {st.session_state.total_pages})"
+            f"Showing **{len(df_basic)}** of **{st.session_state.total_docs}** documents "
+            f"(Page {st.session_state.current_page_for_display} of {st.session_state.total_pages})"
         )
         cols = ["PK_ID"] + BASIC_COLUMNS_TO_SHOW
         cols = [c for c in cols if c in df_basic.columns]
@@ -332,10 +323,7 @@ with basic_tab:
 
         term = st.text_input("🔎 Quick Search basic results", key="quick_search_input_basic")
         if term:
-            mask = view_df.apply(
-                lambda r: r.astype(str).str.contains(term, case=False, na=False).any(),
-                axis=1
-            )
+            mask    = view_df.apply(lambda r: r.astype(str).str.contains(term, case=False, na=False).any(), axis=1)
             view_df = view_df[mask]
             st.write(f"Showing {len(view_df)} rows matching quick search.")
 
@@ -371,10 +359,8 @@ with basic_tab:
             )
 
             selected = grid.get("selected_rows") or []
-            _data = grid.get("data")
-            displayed = pd.DataFrame(_data) if isinstance(_data, list) else (
-                pd.DataFrame(json.loads(_data)) if isinstance(_data, str) else pd.DataFrame()
-            )
+            raw      = grid.get("data")
+            displayed = pd.DataFrame(raw) if isinstance(raw, list) else pd.DataFrame()
 
             st.markdown("---")
             csv_bytes = displayed.to_csv(index=False).encode('utf-8') if not displayed.empty else b""
@@ -390,10 +376,10 @@ with basic_tab:
             st.markdown("---")
             col1, col2 = st.columns([1,3])
             with col1:
-                if len(selected) == 1:
-                    row = selected[0]
-                    handle_single_download(row["PK_ID"], row.get("Document Title",""), "basic")
-                elif len(selected) > 1:
+                if len(selected)==1:
+                    r = selected[0]
+                    handle_single_download(r["PK_ID"], r.get("Document Title",""), "basic")
+                elif len(selected)>1:
                     ids = [int(r["PK_ID"]) for r in selected]
                     handle_batch_download(ids, "basic")
                 else:
@@ -401,31 +387,26 @@ with basic_tab:
             with col2:
                 if selected:
                     sel_df = pd.DataFrame(selected).drop(columns=["_selectedRowNodeInfo"], errors="ignore")
-                    st.dataframe(
-                        sel_df if len(sel_df)>1 else sel_df.iloc[0],
-                        use_container_width=True, height=200
-                    )
+                    st.dataframe(sel_df if len(sel_df)>1 else sel_df.iloc[0],
+                                 use_container_width=True, height=200)
 
 # ─── Advanced Search Tab ──────────────────────────────────────────────────────
 with advanced_tab:
     st.info("Advanced search view with all columns.")
-    if st.session_state.get('api_error'): st.error(st.session_state.api_error)
+    if st.session_state.get('api_error'):    st.error(st.session_state.api_error)
     if st.session_state.get('data_message'): st.warning(st.session_state.data_message)
 
     df_adv = st.session_state.get('search_results_df', pd.DataFrame())
     if not df_adv.empty:
         st.write(
-            f"Showing **{len(df_adv)}** of **{st.session_state.total_docs}** "
-            f"documents (Page {st.session_state.current_page_for_display} of {st.session_state.total_pages})"
+            f"Showing **{len(df_adv)}** of **{st.session_state.total_docs}** documents "
+            f"(Page {st.session_state.current_page_for_display} of {st.session_state.total_pages})"
         )
         view_df = df_adv.copy()
 
         term = st.text_input("🔎 Quick Search advanced results", key="quick_search_input_advanced")
         if term:
-            mask = view_df.apply(
-                lambda r: r.astype(str).str.contains(term, case=False, na=False).any(),
-                axis=1
-            )
+            mask    = view_df.apply(lambda r: r.astype(str).str.contains(term, case=False, na=False).any(), axis=1)
             view_df = view_df[mask]
             st.write(f"Showing {len(view_df)} rows matching quick search.")
 
@@ -471,10 +452,8 @@ with advanced_tab:
             )
 
             selected = grid.get("selected_rows") or []
-            _data = grid.get("data")
-            displayed = pd.DataFrame(_data) if isinstance(_data, list) else (
-                pd.DataFrame(json.loads(_data)) if isinstance(_data, str) else pd.DataFrame()
-            )
+            raw      = grid.get("data")
+            displayed = pd.DataFrame(raw) if isinstance(raw, list) else pd.DataFrame()
 
             st.markdown("---")
             csv_bytes = displayed.to_csv(index=False).encode('utf-8') if not displayed.empty else b""
@@ -490,10 +469,10 @@ with advanced_tab:
             st.markdown("---")
             col1, col2 = st.columns([1,3])
             with col1:
-                if len(selected) == 1:
+                if len(selected)==1:
                     r = selected[0]
                     handle_single_download(r["PK_ID"], r.get("Document Title",""), "advanced")
-                elif len(selected) > 1:
+                elif len(selected)>1:
                     ids = [int(r["PK_ID"]) for r in selected]
                     handle_batch_download(ids, "advanced")
                 else:
@@ -506,23 +485,66 @@ with advanced_tab:
             with col2:
                 if selected:
                     sel_df = pd.DataFrame(selected).drop(columns=["_selectedRowNodeInfo"], errors="ignore")
-                    st.dataframe(
-                        sel_df if len(sel_df)>1 else sel_df.iloc[0],
-                        use_container_width=True, height=200
-                    )
+                    st.dataframe(sel_df if len(sel_df)>1 else sel_df.iloc[0],
+                                 use_container_width=True, height=200)
 
 # ─── Tag Definitions Tab ───────────────────────────────────────────────────────
 with tags_tab:
     st.info("Definitions of tags used to categorize documents.")
     tag_data = {
-        'Tag Name (Filter)': [ /* … same list … */ ],
-        'Description':        [ /* … same list … */ ],
-        'Common Examples / Format': [ /* … same list … */ ]
+        'Tag Name (Filter)': [
+            "File ID", "Document Title", "Published Date", "Org/Utility Name",
+            "Docket Number", "Document Type", "Document Subtype", "Document URL", "CAIRN URL",
+            "Rate Impact", "Utility Reform", "Energy Resources", "Customer Classes", "DERs",
+            "Physical Climate Risk", "Additional Keywords", "Tagger", "Date Tagged", "Quality Check",
+            "Processing Notes", "State/Region", "Regulatory Body", "Jurisdiction Type",
+            "Parent Document", "Related Documents", "Replaces Document", "Relationship Types",
+            "Document Author"
+        ],
+        'Description': [
+            "Unique identifier for the document record (e.g., C250001)",
+            "Full official title of the document", "The date the document was published or filed",
+            "The primary utility, organization, or agency associated with the document",
+            "The official proceeding number (e.g., UE-230810)", "The main category or classification of the document",
+            "A more specific sub-category of the document", "Direct URL link to the original source document webpage (if available)",
+            "Direct URL link to the document file stored within the CAIRN system (if available)",
+            "Does the document primarily discuss ratepayer bill or tariff impacts? (Yes/No/Partial)",
+            "Does the document primarily focus on utility governance or business model changes? (Yes/No/Partial)",
+            "Comma-separated list of energy resource types discussed (e.g., gas, solar, storage, EE)",
+            "Comma-separated list of customer classes addressed (e.g., residential, C&I, low-income)",
+            "Does the document primarily focus on Distributed Energy Resources (DERs)? (Yes/No)",
+            "Does the document primarily discuss physical climate risks like wildfire, heat, floods? (Yes/No)",
+            "Comma-separated list of additional relevant keywords for searching",
+            "Identifier for the person or team who applied the tags", "The date the tags were applied or last updated",
+            "Has the accuracy of the document's metadata been verified? (Complete/Pending/Needs Review)",
+            "Internal notes regarding document processing, OCR issues, or anomalies",
+            "The primary geographic state or region the document pertains to",
+            "The primary regulatory agency with jurisdiction (e.g., PUC, FERC)",
+            "The level of regulatory authority (e.g., State-Level, National)",
+            "The File ID of a parent document this document belongs to (e.g., for appendices)",
+            "Comma-separated File IDs of other documents related to this one",
+            "The File ID of a document that this document replaces or supersedes",
+            "Describes the relationship to parent/related documents (e.g., Appendix, Comment)",
+            "The individual, firm, or entity that authored the document"
+        ],
+        'Common Examples / Format': [
+            "CYY##### (e.g., C250001)", "Text", "YYYY-MM-DD", "PSE, Avista, PGE, CAISO, PNNL",
+            "UE-#####, UG-#####, etc.", "IRP/ISP, Assessment, Comment, Report, Regulatory Rate Plan Order",
+            "Electric IRP, Gas IRP, Comment, Clean_Energy_Party, Integrated Resource Plan", "URL",
+            "URL (May require login/access)", "Yes, No, Partial", "Yes, No, Partial",
+            "All, Gas, Solar, Storage, EE, Clean_Energy, Efficiency", "All, Residential, C&I, Low-Income",
+            "Yes, No", "Yes, No", "IRP, Resilience, Decarbonization, MYRP, Wildfire",
+            "Text (e.g., OCR issues found)", "YYYY-MM-DD", "Complete, Pending, Needs Review",
+            "Text (e.g., OCR issues found)", "WA, CA, OR, Multi-state, National",
+            "WA_UTC, Oregon PUC, CAISO, FERC, CPUC", "State-Level, National, Regional",
+            "CYY##### (e.g., C250002)", "CYY##### (comma-sep)", "CYY##### format",
+            "Appendix, IRP_Comment, Staff_Comment, Errata", "Text"
+        ]
     }
     try:
-        lens = {k: len(v) for k,v in tag_data.items()}
-        if len(set(lens.values()))>1:
-            st.error(f"Error creating Tag Definitions table: {lens}")
+        lens = {k: len(v) for k, v in tag_data.items()}
+        if len(set(lens.values())) > 1:
+            st.error(f"Error creating Tag Definitions table: mismatched lengths {lens}")
         else:
             st.dataframe(pd.DataFrame(tag_data), use_container_width=True, height=600)
     except Exception as e:
@@ -531,4 +553,3 @@ with tags_tab:
 # ─── Footer ───────────────────────────────────────────────────────────────────
 st.markdown("---")
 st.caption("CAIRN Project v1.11.3 | Powered by Streamlit")
-```
