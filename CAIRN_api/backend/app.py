@@ -32,6 +32,9 @@ _info = InMemoryAccountInfo()
 b2_api = B2Api(_info)
 b2_api.authorize_account("production", B2_KEY_ID, B2_KEY)
 bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
+
+# Capture a reusable auth token for signed URLs
+AUTH_TOKEN = b2_api.account_info.get_account_auth_token()
 DOWNLOAD_URL_BASE = _info.get_download_url()
 
 # ─── FastAPI setup ─────────────────────────────────────────────────────────────
@@ -94,7 +97,7 @@ def b2_get_download_url(file_id: str, ttl: int = SIGNED_URL_TTL) -> Optional[str
     """Generate a signed download URL for a Backblaze B2 file."""
     try:
         info = bucket.get_file_info_by_id(file_id)
-        return f"{DOWNLOAD_URL_BASE}/file/{B2_BUCKET_NAME}/{info.file_name}?Authorization={_info.get_authorization_token()}"
+        return f"{DOWNLOAD_URL_BASE}/file/{B2_BUCKET_NAME}/{info.file_name}?Authorization={AUTH_TOKEN}"
     except b2_exceptions.B2Error as e:
         logging.error(f"B2Error generating signed URL for {file_id}: {e}")
     except Exception as e:
@@ -162,7 +165,7 @@ def batch_signed_urls(
     body: BatchSignedUrlsRequest, current_user: Any = Depends(get_current_user)
 ) -> BatchSignedUrlsResponse:
     """Return a list of signed URLs for multiple documents."""
-    ids = [i for i in body.document_ids if i > 0]
+    ids = [i for i in body.document_ids if isinstance(i, int) and i > 0]
     if not ids:
         raise HTTPException(400, "No valid document IDs provided")
     res = supabase.table("files").select("id,b2_file_id,document_title,document_id").in_("id", ids).execute()
