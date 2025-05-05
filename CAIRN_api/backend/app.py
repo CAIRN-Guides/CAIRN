@@ -130,6 +130,7 @@ app.add_middleware(
 
 # ─── Helper Functions ─────────────────────────────────────────────────────────
 
+# --- Corrected Helper Function ---
 def b2_get_download_url(file_id: str, ttl: int = 3600) -> Optional[str]:
     """Generates a presigned download URL for a B2 file ID."""
     if not file_id:
@@ -137,14 +138,21 @@ def b2_get_download_url(file_id: str, ttl: int = 3600) -> Optional[str]:
         return None
     try:
         logging.info(f"Attempting to generate presigned URL for b2_file_id: {file_id} with TTL: {ttl}")
-        if not isinstance(bucket, Bucket):
-            logging.error("B2 Bucket object is not initialized correctly.")
-            return None
-        # Use get_download_url which allows setting content disposition
-        # file_info = bucket.get_file_info_by_id(file_id) # Get file info if needed for name
-        url = bucket.get_download_url_for_fileid(file_id, valid_duration_in_seconds=ttl)
+        # --- FIX: Use the B2Api instance (_b2), not the bucket instance ---
+        if not isinstance(_b2, B2Api):
+             logging.error("B2 API object (_b2) is not initialized correctly.")
+             return None
+
+        # Use the correct method from the B2Api object
+        url = _b2.get_download_url_for_fileid(file_id, valid_duration_in_seconds=ttl)
+        # --- End Fix ---
+
         logging.info(f"Successfully generated URL for b2_file_id: {file_id}")
         return url
+    except b2_exceptions.FileNotPresent as fnfe:
+        # Specific error if the file ID doesn't exist in B2
+        logging.error(f"[B2 SDK Error] File not present for file_id {file_id}: {fnfe}")
+        return None
     except b2_exceptions.B2Error as b2e:
         logging.error(f"[B2 SDK Error] Presign URL error for {file_id}: {b2e}")
         return None
@@ -277,7 +285,7 @@ def get_documents(
         raise HTTPException(status_code=500, detail=f"Internal server error fetching documents: {e}")
 
 
-# --- Existing Single File Download URL Endpoint (Unchanged) ---
+# --- Single File Download URL Endpoint (Unchanged) ---
 @app.get("/documents/{doc_pk_id}/download-url", tags=["Download"], response_model=BatchDownloadResponse)
 async def get_single_download_url(
     doc_pk_id: int,
@@ -338,7 +346,7 @@ async def get_single_download_url(
         raise HTTPException(status_code=500, detail="Internal server error generating download link.")
 
 
-# --- NEW: Batch Download URL Endpoint ---
+# --- Batch Download URL Endpoint ---
 @app.post("/documents/batch-download-url", tags=["Download"], response_model=BatchDownloadResponse)
 async def get_batch_download_url(
     request_data: BatchDownloadRequest,
