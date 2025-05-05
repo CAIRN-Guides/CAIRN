@@ -154,32 +154,45 @@ async def get_current_user(token: Optional[str] = None):
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 @app.get("/documents", response_model=DocumentsResponse, tags=["Documents"])
 def list_documents(
+    request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     current_user: Any = Depends(get_current_user),
-    **filters,
 ):
     """
-    List documents with full-text and exact match filters.
-    Make sure `id` and `b2_file_id` are always selected in Supabase.
+    Dynamically applies **any** query params (e.g. org_utility_name, document_type, etc.)
+    as filters.  Paginate with `page` & `page_size`.
     """
     try:
         query = supabase.table("files").select("*", count="exact")
-        # apply any filters passed as query params
-        for fld, val in filters.items():
-            if val is not None and val != "":
-                if isinstance(val, list):
-                    query = query.cs(fld, val)
-                else:
-                    query = query.eq(fld, val)
 
+        # Pull every ?key=value (or ?key=a,b) except page/page_size
+        for key, value in request.query_params.multi_items():
+            if key in ("page", "page_size"):
+                continue
+
+            # if user passed commas, treat as an array filter
+            if "," in value:
+                vals = value.split(",")
+                query = query.cs(key, vals)
+            else:
+                query = query.eq(key, value)
+
+        # apply pagination & ordering
         start = (page - 1) * page_size
         query = query.order("id", desc=False).range(start, start + page_size - 1)
-        result = query.execute()
 
-        data = result.data or []
+        result = query.execute()
+        docs = result.data or []
         total = result.count or 0
-        return {"data": data, "page": page, "page_size": page_size, "total_count": total}
+
+        logging.info(f"Found {len(docs)} documents (page {page}/{page_size}, total={total})")
+        return {
+            "data": docs,
+            "page": page,
+            "page_size": page_size,
+            "total_count": total
+        }
 
     except Exception as e:
         logging.exception("Error fetching documents")
