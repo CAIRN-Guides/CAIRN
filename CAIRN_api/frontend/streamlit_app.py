@@ -9,7 +9,8 @@ import traceback # For detailed error logging
 
 # ─── Load env & page setup ─────────────────────────────────────────────────────
 load_dotenv()
-API_BASE_URL = os.getenv("API_URL", "https://cairn-backend.onrender.com")
+# <<< CHANGE 1: Updated default API_BASE_URL >>>
+API_BASE_URL = os.getenv("API_URL", "https://cairn-api-refresh-testing.onrender.com") # Updated default URL
 DOCUMENTS_API_URL = f"{API_BASE_URL.rstrip('/')}/documents"
 st.set_page_config(page_title="CAIRN Finder", layout="wide")
 
@@ -27,7 +28,8 @@ with col2: st.title("CAIRN Document Finder")
 # ─── Sidebar filters ───────────────────────────────────────────────────────────
 st.sidebar.header("Filters")
 params = {}
-text_cols = ["document_id", "document_title", "local_backup_name", "tagger", "file_format", "rate_impact", "quality_check", "regulatory_body", "state_region", "docket_number", "document_type", "org_utility_name", "parent_document", "replaces_document", "document_url", "cairn_url", "processing_notes"]
+# <<< NOTE: Added 'description' and 'document_author' to the text filter list, although they might not be ideal for free-text search depending on content >>>
+text_cols = ["document_id", "document_title", "description", "document_author", "local_backup_name", "tagger", "file_format", "rate_impact", "quality_check", "regulatory_body", "state_region", "docket_number", "document_type", "org_utility_name", "parent_document", "replaces_document", "document_url", "cairn_url", "processing_notes"]
 for col in text_cols:
     v = st.sidebar.text_input(col.replace("_", " ").title());
     if v: params[col] = v
@@ -76,10 +78,42 @@ with search_tab:
                     for lc in list_cols_fmt:
                         if lc in df.columns and df[lc].apply(lambda x: isinstance(x, list)).any():
                             df[lc] = df[lc].apply(lambda x: ", ".join(map(str, x)) if isinstance(x, list) else x)
-                    cols_order = ["id", "document_id", "document_title", "published_date", "org_utility_name", "docket_number", "document_type", "document_subtype", "state_region", "rate_impact", "utility_reform", "energy_resources", "customer_classes", "ders", "physical_climate_risk", "additional_keywords", "document_url", "cairn_url", "tagger", "date_tagged", "quality_check", "local_backup_name", "file_format", "processing_notes", "document_author", "regulatory_body", "jurisdiction_type", "parent_document", "related_documents", "replaces_document", "relationship_types", "b2_file_id", "created_at", "updated_at", "last_synced_at"]
+
+                    # <<< CHANGE 2a: Added 'description' and 'document_author' to the desired column order >>>
+                    cols_order = [
+                        "id", "document_id", "document_title", "description", # Added description
+                        "published_date", "document_author", # Added document_author
+                        "org_utility_name", "docket_number", "document_type", "document_subtype",
+                        "state_region", "rate_impact", "utility_reform", "energy_resources",
+                        "customer_classes", "ders", "physical_climate_risk", "additional_keywords",
+                        "document_url", "cairn_url", "tagger", "date_tagged", "quality_check",
+                        "local_backup_name", "file_format", "processing_notes", "regulatory_body",
+                        "jurisdiction_type", "parent_document", "related_documents", "replaces_document",
+                        "relationship_types", "b2_file_id", "created_at", "updated_at", "last_synced_at"
+                    ]
                     cols_to_display = [col for col in cols_order if col in df.columns]
                     df_ordered = df[cols_to_display]
-                    rename_map = {"id": "DB ID", "document_id": "File ID", "local_backup_name": "Local Backup Name", "document_title": "Document Title", "published_date": "Published Date", "document_author": "Document Author", "org_utility_name": "Org/Utility Name", "docket_number": "Docket Number", "document_type": "Document Type", "document_subtype": "Document Subtype", "document_url": "Document URL", "cairn_url": "CAIRN URL", "b2_file_id": "B2 File ID", "rate_impact": "Rate Impact", "utility_reform": "Utility Reform", "energy_resources": "Energy Resources", "customer_classes": "Customer Classes", "ders": "DERs", "physical_climate_risk": "Physical Climate Risk", "additional_keywords": "Additional Keywords", "tagger": "Tagger", "date_tagged": "Date Tagged", "quality_check": "Quality Check", "processing_notes": "Processing Notes", "state_region": "State/Region", "regulatory_body": "Regulatory Body", "jurisdiction_type": "Jurisdiction Type", "parent_document": "Parent Document", "related_documents": "Related Documents", "replaces_document": "Replaces Document", "relationship_types": "Relationship Types", "created_at": "Created At", "updated_at": "Updated At", "last_synced_at": "Last Synced At", "file_format": "File Format"}
+
+                    # <<< CHANGE 2b: Added mappings for 'description' and 'document_author' >>>
+                    rename_map = {
+                        "id": "DB ID", "document_id": "File ID", "local_backup_name": "Local Backup Name",
+                        "document_title": "Document Title", "description": "Description", # Added description
+                        "published_date": "Published Date", "document_author": "Document Author", # Added document_author
+                        "org_utility_name": "Org/Utility Name", "docket_number": "Docket Number",
+                        "document_type": "Document Type", "document_subtype": "Document Subtype",
+                        "document_url": "Document URL", "cairn_url": "CAIRN URL", "b2_file_id": "B2 File ID",
+                        "rate_impact": "Rate Impact", "utility_reform": "Utility Reform",
+                        "energy_resources": "Energy Resources", "customer_classes": "Customer Classes",
+                        "ders": "DERs", "physical_climate_risk": "Physical Climate Risk",
+                        "additional_keywords": "Additional Keywords", "tagger": "Tagger",
+                        "date_tagged": "Date Tagged", "quality_check": "Quality Check",
+                        "processing_notes": "Processing Notes", "state_region": "State/Region",
+                        "regulatory_body": "Regulatory Body", "jurisdiction_type": "Jurisdiction Type",
+                        "parent_document": "Parent Document", "related_documents": "Related Documents",
+                        "replaces_document": "Replaces Document", "relationship_types": "Relationship Types",
+                        "created_at": "Created At", "updated_at": "Updated At", "last_synced_at": "Last Synced At",
+                        "file_format": "File Format"
+                    }
                     df_renamed = df_ordered.rename(columns={k: v for k, v in rename_map.items() if k in df_ordered.columns})
                     st.session_state.docs_df = df_renamed
 
@@ -105,6 +139,9 @@ with search_tab:
         link_cols = ["Document URL", "CAIRN URL"]
         for link_col in link_cols:
              if link_col in df_display_final.columns: gb.configure_column(link_col, cellRenderer='''function(params){return params.value?'<a href="'+params.value+'" target="_blank" rel="noopener noreferrer">'+params.value+'</a>':''}''', minWidth=250)
+        # <<< NOTE: Configure specific columns like Description if needed (e.g., longer minWidth) >>>
+        if "Description" in df_display_final.columns:
+             gb.configure_column("Description", minWidth=300) # Example: Make Description column wider
         gb.configure_side_bar(filters_panel=True, columns_panel=True)
         gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=params.get('page_size', 20))
         gb.configure_selection(selection_mode="multiple", use_checkbox=True, header_checkbox=True, rowMultiSelectWithClick=False)
@@ -183,7 +220,7 @@ with search_tab:
                                     resp.raise_for_status(); data = resp.json()
                                     rel_url = data.get("url"); dl_fn = data.get("filename", "cairn_dl")
                                     if rel_url:
-                                        dl_url = f"{API_BASE_URL.rstrip('/')}{rel_url}"
+                                        dl_url = f"{API_BASE_URL.rstrip('/')}{rel_url}" # Use the potentially updated API_BASE_URL
                                         st.success("Link ready!")
                                         st.markdown(f'<a href="{dl_url}" target="_blank">{dl_fn}</a>', unsafe_allow_html=True)
                                         st.caption("Link may expire.")
