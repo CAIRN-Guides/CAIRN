@@ -100,6 +100,7 @@ with search_tab:
 
         # --- Configure AgGrid ---
         gb = GridOptionsBuilder.from_dataframe(df_display_final)
+        # Use default column config (valueGetter removed)
         gb.configure_default_column(groupable=True, filter="agTextColumnFilter", filterParams={"debounceMs": 300}, sortable=True, resizable=True, wrapText=True, autoHeight=True, minWidth=150)
         link_cols = ["Document URL", "CAIRN URL"]
         for link_col in link_cols:
@@ -111,12 +112,11 @@ with search_tab:
         grid_opts = gb.build()
 
         # --- Render AgGrid ---
-        # This call triggers a rerun when selection changes due to update_mode
         st.session_state.grid_response = AgGrid(
             df_display_final, gridOptions=grid_opts, key='document_grid_main',
             enable_enterprise_modules=False,
             update_mode=GridUpdateMode.MODEL_CHANGED | GridUpdateMode.SELECTION_CHANGED,
-            data_return_mode=DataReturnMode.AS_INPUT,
+            data_return_mode=DataReturnMode.AS_INPUT, # This mode returns DataFrame for selected_rows
             fit_columns_on_grid_load=False, height=600, width='100%',
             reload_data=False, allow_unsafe_jscode=True
         )
@@ -127,7 +127,7 @@ with search_tab:
 
         # --- Download Table View (CSV) ---
         with col_actions1:
-            out_df_view = pd.DataFrame(st.session_state.grid_response["data"])
+            out_df_view = pd.DataFrame(st.session_state.grid_response["data"]) # Data reflects grid view (sort/filter)
             if not out_df_view.empty:
                 ts = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S'); csv_fn = f"cairn_{ts}.csv"
                 csv_data = out_df_view.to_csv(index=False).encode('utf-8')
@@ -136,29 +136,29 @@ with search_tab:
 
         # --- Retrieve selected rows safely ---
         selected_rows_data = None
-        grid_response_current = st.session_state.get('grid_response') # Safely get response object
-
-        # <<< --- DETAILED DEBUGGING --- >>>
-        st.write("--- Debug Selection Info ---")
+        grid_response_current = st.session_state.get('grid_response')
         if grid_response_current:
-            st.write(f"grid_response exists. Keys: {list(grid_response_current.keys())}")
-            # Try accessing selected_rows, default to None if key missing
-            selected_rows_data = grid_response_current.get("selected_rows")
-            st.write(f"selected_rows type: {type(selected_rows_data)}")
-            st.write(f"selected_rows value (first 500 chars): {str(selected_rows_data)[:500]}") # Show value snippet
-        else:
-            st.write("grid_response does NOT exist in session_state.")
-        # Also check the explicit condition result
-        is_valid_selection = isinstance(selected_rows_data, list) and selected_rows_data
-        st.write(f"Condition `isinstance(selected_rows_data, list) and selected_rows_data` is: {is_valid_selection}")
-        st.write("--- End Debug Selection Info ---")
-        # <<< --- END DETAILED DEBUGGING --- >>>
+            selected_rows_data = grid_response_current.get("selected_rows") # This is a DataFrame
 
-        # --- Check if selected_rows_data is a non-empty list ---
-        if is_valid_selection: # Use the evaluated condition
+        # --- *** CORRECTED CHECK: Use DataFrame properties *** ---
+        is_valid_selection = isinstance(selected_rows_data, pd.DataFrame) and not selected_rows_data.empty
+
+        # Optional Debugging (can be removed later)
+        # st.write("--- Debug Selection Info ---")
+        # st.write(f"selected_rows type: {type(selected_rows_data)}")
+        # if isinstance(selected_rows_data, pd.DataFrame): st.dataframe(selected_rows_data.head())
+        # else: st.write(f"selected_rows value: {str(selected_rows_data)[:500]}")
+        # st.write(f"Condition `isinstance(df) and not df.empty` is: {is_valid_selection}")
+        # st.write("--- End Debug Selection Info ---")
+        # --- *** END CORRECTED CHECK *** ---
+
+
+        # --- Check the evaluated condition ---
+        if is_valid_selection:
             # --- PDF Download Logic ---
             with col_actions2:
-                sel_df = pd.DataFrame(selected_rows_data)
+                # Use the DataFrame directly
+                sel_df = selected_rows_data
                 if "DB ID" not in sel_df.columns:
                     st.error("Error: 'DB ID' missing.")
                     st.button("📄 PDF Link", disabled=True, key='pdf_btn_no_id')
@@ -178,6 +178,7 @@ with search_tab:
                                     payload = {"document_ids": selected_pks}; headers["Content-Type"] = "application/json"
                                     resp = requests.post(api_url, json=payload, headers=headers, timeout=180)
                                 else: resp = None
+
                                 if resp:
                                     resp.raise_for_status(); data = resp.json()
                                     rel_url = data.get("url"); dl_fn = data.get("filename", "cairn_dl")
@@ -197,7 +198,8 @@ with search_tab:
 
             # --- Detail pane ---
             st.markdown("---")
-            sel_df_details = pd.DataFrame(selected_rows_data).drop(columns=["_selectedRowNodeInfo"], errors="ignore")
+            # Use the DataFrame directly, drop AgGrid internal column if present
+            sel_df_details = selected_rows_data.drop(columns=["_selectedRowNodeInfo"], errors="ignore")
             st.markdown("### 📄 Details")
             if len(sel_df_details) == 1: st.dataframe(sel_df_details.iloc[0])
             else: st.dataframe(sel_df_details, use_container_width=True)
