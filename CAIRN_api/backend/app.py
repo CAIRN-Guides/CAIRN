@@ -111,16 +111,22 @@ def sanitize_filename(name: str, max_length: int = 100) -> str:
             clean = clean[:max_length]
     return clean or "file"
 
+<<<<<<< HEAD
 def b2_get_download_url(file_id: str, ttl_seconds: int = 3600) -> Optional[str]:
     """
     Generate a direct download URL for a B2 file ID.
     Uses the file_id directly to generate a URL that works with the B2 API.
     """
+=======
+def b2_get_download_url(file_id: str, ttl: int = 3600) -> Optional[str]:
+    """Generates a presigned download URL for a B2 file ID."""
+>>>>>>> parent of 7f8a1b4 (backend helper function fix)
     if not file_id:
         logging.warning("Empty file_id in b2_get_download_url")
         return None
     
     try:
+<<<<<<< HEAD
         # Simple approach - directly build a URL to download by ID
         download_url = f"{DOWNLOAD_URL_BASE}/b2api/v1/b2_download_file_by_id?fileId={file_id}"
         
@@ -137,6 +143,20 @@ def b2_get_download_url(file_id: str, ttl_seconds: int = 3600) -> Optional[str]:
             
         return download_url
         
+=======
+        logging.info(f"Attempting to generate presigned URL for b2_file_id: {file_id} with TTL: {ttl}")
+        if not isinstance(bucket, Bucket):
+            logging.error("B2 Bucket object is not initialized correctly.")
+            return None
+        # Use get_download_url which allows setting content disposition
+        # file_info = bucket.get_file_info_by_id(file_id) # Get file info if needed for name
+        url = bucket.get_download_url_for_fileid(file_id, valid_duration_in_seconds=ttl)
+        logging.info(f"Successfully generated URL for b2_file_id: {file_id}")
+        return url
+    except b2_exceptions.B2Error as b2e:
+        logging.error(f"[B2 SDK Error] Presign URL error for {file_id}: {b2e}")
+        return None
+>>>>>>> parent of 7f8a1b4 (backend helper function fix)
     except Exception as e:
         logging.exception(f"Failed to generate download URL for {file_id}: {e}")
         return None
@@ -192,9 +212,18 @@ def list_documents(
         logging.exception("Error fetching documents")
         raise HTTPException(status_code=500, detail=f"Internal error fetching documents: {str(e)}")
 
+<<<<<<< HEAD
 @app.get("/documents/{doc_pk}/download-url", response_model=BatchDownloadResponse, tags=["Download"])
 async def single_download_url(
     doc_pk: int, current_user: Any = Depends(get_current_user)
+=======
+
+# --- Existing Single File Download URL Endpoint (Unchanged) ---
+@app.get("/documents/{doc_pk_id}/download-url", tags=["Download"], response_model=BatchDownloadResponse)
+async def get_single_download_url(
+    doc_pk_id: int,
+    current_user: Optional[dict] = Depends(get_current_user)
+>>>>>>> parent of 7f8a1b4 (backend helper function fix)
 ):
     """Generate download URL for a single document"""
     logging.info(f"Single download URL requested for PK: {doc_pk}")
@@ -245,9 +274,19 @@ async def single_download_url(
         logging.exception(f"Error generating download URL for {b2_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate download link")
 
+<<<<<<< HEAD
 # Fixed proxy endpoint for B2 downloads
 @app.get("/api/b2-proxy/{file_id}/{filename}")
 async def proxy_b2_download(file_id: str, filename: str):
+=======
+
+# --- NEW: Batch Download URL Endpoint ---
+@app.post("/documents/batch-download-url", tags=["Download"], response_model=BatchDownloadResponse)
+async def get_batch_download_url(
+    request_data: BatchDownloadRequest,
+    current_user: Optional[dict] = Depends(get_current_user)
+):
+>>>>>>> parent of 7f8a1b4 (backend helper function fix)
     """
     Proxy B2 downloads through our server.
     This allows us to include auth headers without exposing them to the client.
