@@ -1,4 +1,4 @@
-# backend/main.py (Rewritten v1.6)
+# backend Start re-write 5.5.25 1.1
 
 import os
 import io
@@ -64,23 +64,31 @@ except Exception as e:
     raise RuntimeError(f"Client initialization failed: {e}")
 
 # --- Pydantic Schemas (Data Models) ---
+# In your backend app.py
+
 class DocumentOut(BaseModel):
-    # Define fields expected to be returned by the /documents endpoint
-    # Add all relevant fields from your 'files' table that the frontend needs
+    # --- Keep ALL existing fields ---
     id: int
     created_at: Optional[str] = None
     document_id: Optional[str] = None
     document_title: Optional[str] = None
     b2_file_id: Optional[str] = None
     published_date: Optional[str] = None
-    document_author: Optional[str] = None
+    # document_author: Optional[str] = None # This was missing
     org_utility_name: Optional[str] = None
     docket_number: Optional[str] = None
     document_type: Optional[str] = None
-    # ... add other fields like state_region, keywords, etc.
+    # ... other existing fields like state_region, keywords, etc. ...
+    # Make sure ALL columns you want returned are listed
+
+    # --- ADD THESE NEW FIELDS ---
+    document_author: Optional[str] = None
+    description: Optional[str] = None
+    # --- END ADDED FIELDS ---
 
     class Config:
-        orm_mode = True # Compatibility if creating from ORM objects (though Supabase client returns dicts)
+        # orm_mode = True # Old Pydantic v1 style
+        from_attributes = True # Use this for Pydantic v2+
 
 class DocumentsResponse(BaseModel):
     data: List[DocumentOut]
