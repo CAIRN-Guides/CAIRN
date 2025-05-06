@@ -95,8 +95,8 @@ with search_tab:
         with st.spinner('Fetching documents from CAIRN...'):
             try:
                 active_params = {k: v for k, v in params.items() if v is not None and v != ''}
-                st.write("Sending Request to:", DOCUMENTS_API_URL) # Debug
-                st.write("With Params:", active_params) # Debug
+                # st.write("Sending Request to:", DOCUMENTS_API_URL) # Optional Debug
+                # st.write("With Params:", active_params) # Optional Debug
 
                 resp = requests.get(DOCUMENTS_API_URL, params=active_params, timeout=45)
                 resp.raise_for_status()
@@ -182,19 +182,23 @@ with search_tab:
         else:
             df_display_final = df_display_base
 
-        # <<< --- DEBUG LINE --- >>>
-        # Inspect the DataFrame just before passing it to AgGrid
-        st.subheader("Debug: DataFrame going into AgGrid")
-        st.dataframe(df_display_final)
+        # <<< --- DEBUG LINE (Optional: Can be removed once grid displays correctly) --- >>>
+        # st.subheader("Debug: DataFrame going into AgGrid")
+        # st.dataframe(df_display_final)
         # <<< --- END DEBUG LINE --- >>>
 
         # --- Configure AgGrid ---
         gb = GridOptionsBuilder.from_dataframe(df_display_final)
+
+        # *** FIX: Commented out the problematic valueGetter ***
         gb.configure_default_column(
-            groupable=True, valueGetter="(data.field == null ? '' : data.field)",
+            groupable=True,
+            # valueGetter="(data.field == null ? '' : data.field)", # REMOVED - Let AgGrid handle defaults
             filter="agTextColumnFilter", filterParams={"debounceMs": 300},
             sortable=True, resizable=True, wrapText=True, autoHeight=True, minWidth=150
         )
+        # --- End of Fix ---
+
         link_cols = ["Document URL", "CAIRN URL"]
         for link_col in link_cols:
              if link_col in df_display_final.columns:
@@ -219,7 +223,9 @@ with search_tab:
             fit_columns_on_grid_load=False,
             height=600, width='100%',
             reload_data=False, # Data managed by session state
-            allow_unsafe_jscode=True,
+            allow_unsafe_jscode=True, # For links
+            # Optional: Add this if issues persist, might help JS function handling
+            # try_convert_js_functions_to_string=True
         )
 
         # --- Actions Section ---
@@ -228,6 +234,7 @@ with search_tab:
 
         # --- Download Table View (CSV) ---
         with col_actions1:
+            # Uses grid_response['data'] which reflects client-side filtering/sorting
             out_df_view = pd.DataFrame(st.session_state.grid_response["data"])
             if not out_df_view.empty:
                 timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
