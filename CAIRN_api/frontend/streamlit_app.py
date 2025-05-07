@@ -16,9 +16,10 @@ st.set_page_config(page_title="CAIRN Finder", layout="wide")
 # --- Initialize Session State ---
 if 'docs_df' not in st.session_state: st.session_state.docs_df = pd.DataFrame()
 if 'grid_response' not in st.session_state: st.session_state.grid_response = None
-if 'active_tab' not in st.session_state: st.session_state.active_tab = "about_cairn" # Default tab
 if 'params' not in st.session_state: st.session_state.params = {}
-
+# Renamed session state variable for clarity to control content display
+if 'active_tab_for_content' not in st.session_state:
+    st.session_state.active_tab_for_content = "about_cairn" # Default tab
 
 # ─── Header ────────────────────────────────────────────────────────────────────
 col1, col2 = st.columns([1, 5])
@@ -29,40 +30,58 @@ with col2: st.title("CAIRN Document Finder")
 
 # ─── Sidebar filters ───────────────────────────────────────────────────────────
 st.sidebar.header("Filters")
-params = st.session_state.params # Use session state for params
+# Retrieve params from session state at the beginning of each run
+current_params = st.session_state.get('params', {})
 
 # Group 1 Filters
-params["org_utility_name"] = st.sidebar.text_input("Org or Utility Name", value=params.get("org_utility_name", ""))
-params["document_author"] = st.sidebar.text_input("Document Author", value=params.get("document_author", ""))
-params["document_type"] = st.sidebar.text_input("Document Type", value=params.get("document_type", ""))
-params["document_subtype"] = st.sidebar.text_input("Document Subtype", value=params.get("document_subtype", ""))
+current_params["org_utility_name"] = st.sidebar.text_input("Org or Utility Name", value=current_params.get("org_utility_name", ""))
+current_params["document_author"] = st.sidebar.text_input("Document Author", value=current_params.get("document_author", ""))
+current_params["document_type"] = st.sidebar.text_input("Document Type", value=current_params.get("document_type", ""))
+current_params["document_subtype"] = st.sidebar.text_input("Document Subtype", value=current_params.get("document_subtype", ""))
 
 st.sidebar.markdown("---") # Break in the sidebar
 
 # Group 2 Filters
-params["state_region"] = st.sidebar.text_input("State or Region", value=params.get("state_region", ""))
-params["jurisdiction_type"] = st.sidebar.text_input("Jurisdiction", value=params.get("jurisdiction_type", ""))
-params["regulatory_body"] = st.sidebar.text_input("Regulatory Body", value=params.get("regulatory_body", ""))
+current_params["state_region"] = st.sidebar.text_input("State or Region", value=current_params.get("state_region", ""))
+current_params["jurisdiction_type"] = st.sidebar.text_input("Jurisdiction", value=current_params.get("jurisdiction_type", ""))
+current_params["regulatory_body"] = st.sidebar.text_input("Regulatory Body", value=current_params.get("regulatory_body", ""))
 
 # "Load Documents" button comes right after "Regulatory Body"
 load_button_pressed = st.sidebar.button("Load Documents", key="load_btn")
 
 # Options section after the "Load Documents" button
 st.sidebar.header("Options")
-params["page"] = st.sidebar.number_input("Page", min_value=1, value=params.get("page", 1))
-params["page_size"] = st.sidebar.number_input("Size", min_value=1, max_value=200, value=params.get("page_size", 20))
+current_params["page"] = st.sidebar.number_input("Page", min_value=1, value=current_params.get("page", 1))
+current_params["page_size"] = st.sidebar.number_input("Size", min_value=1, max_value=200, value=current_params.get("page_size", 20))
+
+# Update session state params with the latest input values
+st.session_state.params = current_params
 
 if load_button_pressed:
-    st.session_state.active_tab = "search_documents" # Switch to search tab on button press
-    st.session_state.params = params # Store current params in session state
+    st.session_state.active_tab_for_content = "search_documents" # Switch content to search tab
+    # Params are already updated in session state above
+    # Consider st.rerun() if immediate tab switch effect is critical and not happening
+    # st.rerun()
+
 
 # ─── Main Area with Tabs ───────────────────────────────────────────────────────
 tab_titles = ["ℹ️ About CAIRN", "🔍 Search Documents", "🏷️ Tag Definitions"]
-about_tab_content, search_tab_content, tags_tab_content = st.tabs(tab_titles)
 
+# The st.tabs component handles the visual selection of tabs.
+# Its returned booleans indicate which tab is currently selected by the user/Streamlit.
+about_tab_is_selected, search_tab_is_selected, tags_tab_is_selected = st.tabs(tab_titles)
 
-# --- Content for About Tab ---
-if about_tab_content:
+# If the user clicks a tab, update our controlling session state variable.
+# This ensures that user clicks override any programmatic tab setting from previous actions if needed.
+if about_tab_is_selected:
+    st.session_state.active_tab_for_content = "about_cairn"
+elif search_tab_is_selected: # Use elif to ensure only one click updates the state if multiple were somehow true
+    st.session_state.active_tab_for_content = "search_documents"
+elif tags_tab_is_selected:
+    st.session_state.active_tab_for_content = "tag_definitions"
+
+# Render content based EXCLUSIVELY on st.session_state.active_tab_for_content
+if st.session_state.active_tab_for_content == "about_cairn":
     st.markdown("""
     ## What is CAIRN?
 
@@ -98,15 +117,13 @@ if about_tab_content:
     5.  The table will populate within the **🔍 Search Documents** tab. You can then sort, filter, search, download, and view details.
     """)
 
-# --- Content for Tags Tab ---
-if tags_tab_content:
+elif st.session_state.active_tab_for_content == "tag_definitions":
     st.info("""
     This table explains the different fields (tags) used to categorize documents in CAIRN.
     You can use the filters in the sidebar (under the '🔍 Search Documents' tab) to search based on these fields and terms.
     Note: Field names here match the filter labels in the sidebar. The underlying database field names might differ slightly (e.g., underscores).
     """)
 
-    # Defines filterable fields for the "Tag Definitions" tab
     tag_data_filterable = {
         'Tag Name (Filter)': [
             "Org or Utility Name", "Document Author", "Document Type", "Document Subtype",
@@ -129,8 +146,6 @@ if tags_tab_content:
     tag_definitions_df_filterable = pd.DataFrame(tag_data_filterable)
     tag_definitions_df_filterable.rename(columns={'Tag Name (Filter)': 'Field Name', 'Filter Input Type / Format': 'Example Input / Notes'}, inplace=True)
 
-    # Defines other common fields that appear in the table but are not filterable via sidebar
-    # CORRECTED: Ensured all lists have the same length (29 items)
     common_table_fields_tags = {
         'Tag Name (Displayed in Table)': [
             "DB ID", "File ID", "Document Title", "Description", "Published Date",
@@ -140,7 +155,7 @@ if tags_tab_content:
             "Local Backup Name", "File Format", "Processing Notes", "Parent Document",
             "Related Documents", "Replaces Document", "Relationship Types", "B2 File ID",
             "Created At", "Updated At", "Last Synced At"
-        ], # 29 items
+        ],
         'Description': [
             "Unique database identifier for the document record",
             "Unique CAIRN identifier for the document file (e.g., C250001)",
@@ -171,53 +186,45 @@ if tags_tab_content:
             "Date the record was created in the database",
             "Date the record was last modified in the database",
             "Date the document record was last synchronized with its source"
-        ], # 29 items
-        'Filterable in Sidebar?': ["No"] * 29 # 29 items
+        ],
+        'Filterable in Sidebar?': ["No"] * 29
     }
     tag_definitions_df_other = pd.DataFrame(common_table_fields_tags)
     tag_definitions_df_other.rename(columns={'Tag Name (Displayed in Table)': 'Field Name'}, inplace=True)
-
 
     st.subheader("Filterable Fields (via Sidebar)")
     st.dataframe(tag_definitions_df_filterable[['Field Name', 'Description', 'Example Input / Notes']], use_container_width=True)
 
     st.subheader("Other Common Fields (Displayed in Document Table)")
     st.markdown("The following fields may also appear in the document table in the 'Search Documents' tab but are not directly filterable through the simplified sidebar filters.")
-    # Displaying relevant columns from the corrected DataFrame
     st.dataframe(tag_definitions_df_other[['Field Name', 'Description']], use_container_width=True, height=300)
 
-
-# ─── Search Tab Content ────────────────────────────────────────────────────────
-if search_tab_content:
+elif st.session_state.active_tab_for_content == "search_documents":
     st.info("Use the filters in the sidebar and click 'Load Documents' to fetch and display data here.")
 
-    if load_button_pressed or ('docs_df' in st.session_state and not st.session_state.docs_df.empty) :
-        if load_button_pressed: # Only fetch if the button initiated this
+    # Check if data should be loaded/displayed (button pressed OR data already exists and this tab is active)
+    if load_button_pressed or ('docs_df' in st.session_state and not st.session_state.docs_df.empty):
+        if load_button_pressed: # Only fetch new data if the button specifically triggered this
             with st.spinner('Fetching documents...'):
                 try:
                     active_params = {}
+                    # Use st.session_state.params which should be up-to-date from sidebar
                     for k, v in st.session_state.params.items():
                         if isinstance(v, str):
-                            if v.strip() != '': # Send only non-empty strings
+                            if v.strip() != '':
                                 active_params[k] = v
-                        elif v is not None : # For non-string types like numbers (page, page_size)
+                        elif v is not None:
                              active_params[k] = v
-                    
-                    # Remove keys with None or empty string values from params before API call
-                    # This is implicitly handled by the loop above, but good to be aware
-                    # active_params = {k: v for k, v in active_params.items() if v is not None and (not isinstance(v, str) or v.strip() != '')}
-
 
                     resp = requests.get(DOCUMENTS_API_URL, params=active_params, timeout=45)
                     resp.raise_for_status()
                     docs_data = resp.json()
                     docs = docs_data.get("data", [])
                     total_docs = docs_data.get("total_count", len(docs))
-                    # Use .get for page and page_size from active_params to handle cases where they might not be set
-                    current_page = active_params.get('page', 1)
-                    page_size_from_params = active_params.get('page_size', 20)
-                    total_pages = (total_docs + page_size_from_params - 1) // page_size_from_params if total_docs > 0 else 1
-                    st.write(f"Showing **{len(docs)}** of **{total_docs}** documents (Page {current_page} of {total_pages})")
+                    current_page_val = active_params.get('page', 1) # Renamed to avoid conflict
+                    page_size_val = active_params.get('page_size', 20) # Renamed
+                    total_pages = (total_docs + page_size_val - 1) // page_size_val if total_docs > 0 else 1
+                    st.write(f"Showing **{len(docs)}** of **{total_docs}** documents (Page {current_page_val} of {total_pages})")
 
                     if not docs:
                         st.warning("No documents found matching your criteria."); st.session_state.docs_df = pd.DataFrame()
@@ -272,7 +279,7 @@ if search_tab_content:
                     st.error(f"Processing error: {e}"); st.error(traceback.format_exc())
                     st.session_state.docs_df = pd.DataFrame()
 
-        # --- Display AgGrid and Actions (always if docs_df is not empty) ---
+        # Display AgGrid if data exists in session state
         if not st.session_state.docs_df.empty:
             df_display_base = st.session_state.docs_df
             search_val = st.text_input("🔎 Quick Search current results", key="quick_search_input");
@@ -287,7 +294,6 @@ if search_tab_content:
             if "Description" in df_display_final.columns:
                  gb.configure_column("Description", minWidth=300)
             gb.configure_side_bar(filters_panel=True, columns_panel=True)
-            # Use page_size from session_state.params for pagination, which should be up-to-date
             gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=st.session_state.params.get('page_size', 20))
             gb.configure_selection(selection_mode="multiple", use_checkbox=True, header_checkbox=True, rowMultiSelectWithClick=False)
             gb.configure_grid_options(domLayout='normal')
@@ -350,7 +356,7 @@ if search_tab_content:
                                         payload = {"document_ids": selected_pks}; headers["Content-Type"] = "application/json"
                                         resp = requests.post(api_url, json=payload, headers=headers, timeout=180)
                                     else:
-                                        resp = None # Should not be reached if selected_pks is not empty
+                                        resp = None
 
                                     if resp:
                                         resp.raise_for_status(); data = resp.json()
@@ -374,20 +380,15 @@ if search_tab_content:
                 st.markdown("### 📄 Selected Document Details")
                 if len(sel_df_details) == 1: st.dataframe(sel_df_details.iloc[0])
                 else: st.dataframe(sel_df_details, use_container_width=True)
-
-            else: # if not is_valid_selection
+            else:
                 with col_actions2: st.button("📄 PDF Link", disabled=True, key='pdf_btn_no_sel')
                 st.markdown("---"); st.caption("Select rows for details/download.")
-
         elif load_button_pressed and st.session_state.docs_df.empty:
-            # This case is when the button was pressed, API call was made, but no docs were found.
-            # The warning "No documents found matching your criteria." is already shown inside the data fetching block.
+            # Warning for "No documents found" is shown inside the data fetching block
             pass
-
-    elif not load_button_pressed and st.session_state.docs_df.empty :
-         # This state is when the tab is selected but no button has been pressed yet
-         # and no data is loaded. The initial info message "Use the filters..." is sufficient.
-         pass
+    # else: # Initial state of search tab, before "Load Documents" is pressed and no data exists
+        # The st.info message at the start of this tab's content block is shown.
+        # No specific 'else' block needed here for that initial state.
 
 # Optional Footer
 # st.markdown("---")
