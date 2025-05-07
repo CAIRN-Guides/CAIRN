@@ -98,7 +98,7 @@ with about_tab:
 
     ### Getting Started: How to Query the CAIRN Database
 
-    1.  Review the **🏷️ Tag Definitions** tab to understand the available search fields and common terms. Currently search only matches EXACTLY.
+    1.  Review the **🏷️ Tag Definitions** tab to understand the available search fields and common terms.
     2.  Click on the **🔍 Search Documents** tab.
     3.  Use the **filters in the sidebar** on the left to narrow down the vast collection of documents.
     4.  Once filters are set, click the **"Load Documents"** button in the sidebar.
@@ -125,14 +125,14 @@ with tags_tab:
             "Jurisdiction",
             "Regulatory Body"
         ],
-        'Top 3 Examples - Search Using Exact Matches': [
-            "1. Seattle City Light (SCL) \n | Puget Sound Energy (PSE) | Avista WA | SnoPUD   ", 
-            "1. Seattle City Light (SCL) | \n PNUCC ",
-            "1. IRP/ISP \n | Rate Schedule ",
-            "1. Rate Summary | \n IRP | Utility Association ", # Combined 2nd/3rd if counts are same
-            "1. WA \n | PNW Region ",
-            "1. State Level \n Regional Level ",
-            "1. WA UTC |\n BPA / PNW "
+        'Top 3 Examples (with count)': [
+            "1. Seattle City Light (SCL) (9)\n2. Puget Sound Energy (PSE) (8) 3. Avista WA, 4. SnoPUD   ", 
+            "1. Seattle City Light (SCL) (9)\n2. PNUCC (7)",
+            "1. IRP/ISP (22)\n2. Rate Schedule (13)",
+            "1. Rate Summary (8)\n2. IRP (6), Utility Association (6)", # Combined 2nd/3rd if counts are same
+            "1. WA (32)\n2. PNW Region (9)",
+            "1. State Level (45)\n2. Regional Level (9)",
+            "1. WA UTC (33)\n2. BPA / PNW (9)"
         ]
     }
     tags_display_df = pd.DataFrame(top_3_data)
