@@ -9,7 +9,7 @@ import traceback # For detailed error logging
 
 # ─── Load env & page setup ─────────────────────────────────────────────────────
 load_dotenv()
-API_BASE_URL = os.getenv("API_URL", "https://cairn-backend.onrender.com") # Default URL
+API_BASE_URL = os.getenv("API_URL", "https://cairn-api-refresh-testing.onrender.com") # Default URL
 DOCUMENTS_API_URL = f"{API_BASE_URL.rstrip('/')}/documents"
 st.set_page_config(page_title="CAIRN Finder", layout="wide")
 
