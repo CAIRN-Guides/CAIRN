@@ -106,18 +106,11 @@ if tags_tab_content:
     Note: Field names here match the filter labels in the sidebar. The underlying database field names might differ slightly (e.g., underscores).
     """)
 
-    # Updated tag_data to reflect removed sidebar filters
-    tag_data = {
+    # Defines filterable fields for the "Tag Definitions" tab
+    tag_data_filterable = {
         'Tag Name (Filter)': [
             "Org or Utility Name", "Document Author", "Document Type", "Document Subtype",
             "State or Region", "Jurisdiction", "Regulatory Body",
-            # Removed other specific text, date, and list filters from this definition list
-            # as they are no longer in the sidebar.
-            # We keep general document attributes that might still be in the data table,
-            # but are not filterable through the simplified sidebar.
-            # If you want to list ALL possible data fields here, even if not filterable,
-            # you can add them back, but it might confuse users about what's a sidebar filter.
-            # For now, aligning with active sidebar filters for clarity.
         ],
         'Description': [
             "The primary utility, organization, or agency associated with the document (Filterable)",
@@ -133,19 +126,21 @@ if tags_tab_content:
             "Text (e.g., WA, CA)", "Text", "Text (e.g., WA_UTC)",
         ]
     }
-    # Add other common fields that will appear in the table but are not filters
-    # This part is for display in the "Tag Definitions" tab, not for creating sidebar filters
-    # These are fields that users might see in the AgGrid table
+    tag_definitions_df_filterable = pd.DataFrame(tag_data_filterable)
+    tag_definitions_df_filterable.rename(columns={'Tag Name (Filter)': 'Field Name', 'Filter Input Type / Format': 'Example Input / Notes'}, inplace=True)
+
+    # Defines other common fields that appear in the table but are not filterable via sidebar
+    # CORRECTED: Ensured all lists have the same length (29 items)
     common_table_fields_tags = {
         'Tag Name (Displayed in Table)': [
             "DB ID", "File ID", "Document Title", "Description", "Published Date",
-            "Docket Number", "Document URL", "CAIRN URL",
-            "Rate Impact", "Utility Reform", "Energy Resources", "Customer Classes", "DERs",
-            "Physical Climate Risk", "Additional Keywords", "Tagger", "Date Tagged", "Quality Check",
-            "Processing Notes", "Parent Document", "Related Documents", "Replaces Document",
-            "Relationship Types", "File Format", "Local Backup Name",
+            "Docket Number", "Rate Impact", "Utility Reform", "Energy Resources",
+            "Customer Classes", "DERs", "Physical Climate Risk", "Additional Keywords",
+            "Document URL", "CAIRN URL", "Tagger", "Date Tagged", "Quality Check",
+            "Local Backup Name", "File Format", "Processing Notes", "Parent Document",
+            "Related Documents", "Replaces Document", "Relationship Types", "B2 File ID",
             "Created At", "Updated At", "Last Synced At"
-        ],
+        ], # 29 items
         'Description': [
             "Unique database identifier for the document record",
             "Unique CAIRN identifier for the document file (e.g., C250001)",
@@ -153,56 +148,42 @@ if tags_tab_content:
             "Brief summary or description of the document content",
             "The date the document was published or filed (YYYY-MM-DD)",
             "The official proceeding number (e.g., UE-230810)",
-            "Direct URL link to the original source document webpage (if available)",
-            "Direct URL link to the document file stored within the CAIRN system (if generated/available)",
             "Discusses ratepayer bill or tariff impacts? (e.g., Y/N/Partial/Text)",
             "Focuses on utility governance or business model changes? (e.g., Y/N/Partial/Text)",
-            "Energy resource types discussed (e.g., gas, solar, storage, EE)",
-            "Customer classes addressed (e.g., residential, C&I, low-income)",
-            "Related to Distributed Energy Resources (DERs) (e.g., DER, interconnection)",
+            "Energy resource types discussed (e.g., gas, solar, storage, EE) (comma-separated)",
+            "Customer classes addressed (e.g., residential, C&I, low-income) (comma-separated)",
+            "Related to Distributed Energy Resources (DERs) (e.g., DER, interconnection) (comma-separated)",
             "Discusses physical climate risks like wildfire, heat, floods?",
-            "Additional relevant keywords for searching",
+            "Additional relevant keywords for searching (comma-separated)",
+            "Direct URL link to the original source document webpage (if available)",
+            "Direct URL link to the document file stored within the CAIRN system (if generated/available)",
             "Identifier for the person or team who applied the tags",
             "The date the tags were applied or last updated (YYYY-MM-DD)",
             "Has the accuracy of the document's metadata been verified? (e.g., Y/N/Pending)",
+            "Internal filename used for local backup storage",
+            "The format of the file (e.g., PDF, DOCX)",
             "Internal notes regarding document processing, OCR issues, or anomalies",
             "File ID of a parent document this document belongs to",
-            "File IDs of other documents related to this one",
+            "File IDs of other documents related to this one (comma-separated)",
             "File ID of a document that this document replaces or supersedes",
-            "Describes the relationship to parent/related documents",
-            "The format of the file (e.g., PDF, DOCX)",
-            "Internal filename used for local backup storage",
+            "Describes the relationship to parent/related documents (comma-separated)",
+            "Internal Backblaze B2 file identifier",
             "Date the record was created in the database",
             "Date the record was last modified in the database",
-            "Date the document record was last synchronized with its source",
-        ],
-        'Filterable in Sidebar?': ["No"] * 27 # All these are not filterable via sidebar now
+            "Date the document record was last synchronized with its source"
+        ], # 29 items
+        'Filterable in Sidebar?': ["No"] * 29 # 29 items
     }
-
-    # Combine filterable tags with other common table fields for the definitions tab
-    tag_definitions_df_filterable = pd.DataFrame(tag_data)
-    tag_definitions_df_filterable['Filterable in Sidebar?'] = "Yes"
-    # Rename columns to be consistent for concatenation
-    tag_definitions_df_filterable.rename(columns={'Tag Name (Filter)': 'Field Name', 'Filter Input Type / Format': 'Example Input / Notes'}, inplace=True)
-
-
     tag_definitions_df_other = pd.DataFrame(common_table_fields_tags)
-    tag_definitions_df_other.rename(columns={'Tag Name (Displayed in Table)': 'Field Name', 'Filterable in Sidebar?': 'Filterable in Sidebar?'}, inplace=True)
-    tag_definitions_df_other['Example Input / Notes'] = "N/A (Displayed in table)"
+    tag_definitions_df_other.rename(columns={'Tag Name (Displayed in Table)': 'Field Name'}, inplace=True)
 
 
-    # Concatenate the dataframes
-    # Ensure columns match for concatenation: Field Name, Description, Example Input / Notes, Filterable in Sidebar?
-    # We need to align columns before concat if they are different
-    # For simplicity, let's just display filterable ones clearly, then list others.
-    # Or, create a unified structure.
-
-    # Simpler approach: Display filterable, then mention other fields are in the table.
     st.subheader("Filterable Fields (via Sidebar)")
     st.dataframe(tag_definitions_df_filterable[['Field Name', 'Description', 'Example Input / Notes']], use_container_width=True)
 
     st.subheader("Other Common Fields (Displayed in Document Table)")
     st.markdown("The following fields may also appear in the document table in the 'Search Documents' tab but are not directly filterable through the simplified sidebar filters.")
+    # Displaying relevant columns from the corrected DataFrame
     st.dataframe(tag_definitions_df_other[['Field Name', 'Description']], use_container_width=True, height=300)
 
 
@@ -211,25 +192,31 @@ if search_tab_content:
     st.info("Use the filters in the sidebar and click 'Load Documents' to fetch and display data here.")
 
     if load_button_pressed or ('docs_df' in st.session_state and not st.session_state.docs_df.empty) :
-        if load_button_pressed:
+        if load_button_pressed: # Only fetch if the button initiated this
             with st.spinner('Fetching documents...'):
                 try:
-                    # Ensure only non-empty string values are sent for text inputs
                     active_params = {}
                     for k, v in st.session_state.params.items():
                         if isinstance(v, str):
-                            if v.strip() != '':
+                            if v.strip() != '': # Send only non-empty strings
                                 active_params[k] = v
                         elif v is not None : # For non-string types like numbers (page, page_size)
                              active_params[k] = v
+                    
+                    # Remove keys with None or empty string values from params before API call
+                    # This is implicitly handled by the loop above, but good to be aware
+                    # active_params = {k: v for k, v in active_params.items() if v is not None and (not isinstance(v, str) or v.strip() != '')}
+
 
                     resp = requests.get(DOCUMENTS_API_URL, params=active_params, timeout=45)
                     resp.raise_for_status()
                     docs_data = resp.json()
                     docs = docs_data.get("data", [])
                     total_docs = docs_data.get("total_count", len(docs))
-                    current_page = active_params.get('page', 1); page_size = active_params.get('page_size', 20)
-                    total_pages = (total_docs + page_size - 1) // page_size if total_docs > 0 else 1
+                    # Use .get for page and page_size from active_params to handle cases where they might not be set
+                    current_page = active_params.get('page', 1)
+                    page_size_from_params = active_params.get('page_size', 20)
+                    total_pages = (total_docs + page_size_from_params - 1) // page_size_from_params if total_docs > 0 else 1
                     st.write(f"Showing **{len(docs)}** of **{total_docs}** documents (Page {current_page} of {total_pages})")
 
                     if not docs:
@@ -285,9 +272,10 @@ if search_tab_content:
                     st.error(f"Processing error: {e}"); st.error(traceback.format_exc())
                     st.session_state.docs_df = pd.DataFrame()
 
+        # --- Display AgGrid and Actions (always if docs_df is not empty) ---
         if not st.session_state.docs_df.empty:
             df_display_base = st.session_state.docs_df
-            search_val = st.text_input("🔎 Quick Search current results", key="quick_search_input"); # Renamed variable to avoid conflict
+            search_val = st.text_input("🔎 Quick Search current results", key="quick_search_input");
             if search_val: df_display_final = df_display_base[df_display_base.apply(lambda r: r.astype(str).str.contains(search_val, case=False, na=False).any(), axis=1)]
             else: df_display_final = df_display_base
 
@@ -299,7 +287,7 @@ if search_tab_content:
             if "Description" in df_display_final.columns:
                  gb.configure_column("Description", minWidth=300)
             gb.configure_side_bar(filters_panel=True, columns_panel=True)
-            # Use page_size from session_state.params for pagination
+            # Use page_size from session_state.params for pagination, which should be up-to-date
             gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=st.session_state.params.get('page_size', 20))
             gb.configure_selection(selection_mode="multiple", use_checkbox=True, header_checkbox=True, rowMultiSelectWithClick=False)
             gb.configure_grid_options(domLayout='normal')
@@ -318,7 +306,6 @@ if search_tab_content:
             col_actions1, col_actions2 = st.columns(2)
 
             with col_actions1:
-                # Ensure grid_response["data"] is a DataFrame before using .empty or .to_csv
                 current_grid_data = st.session_state.grid_response.get("data")
                 if isinstance(current_grid_data, pd.DataFrame) and not current_grid_data.empty:
                     out_df_view = current_grid_data
@@ -343,11 +330,11 @@ if search_tab_content:
                         st.error("Error: 'DB ID' missing from selected rows. Cannot generate PDF link.")
                         st.button("📄 PDF Link", disabled=True, key='pdf_btn_no_id')
                     else:
-                        selected_pks = sel_df["DB ID"].dropna().tolist() # Drop NA DB IDs
+                        selected_pks = sel_df["DB ID"].dropna().tolist()
                         num_sel = len(selected_pks)
                         btn_label = f"📄 PDF Link ({num_sel} selected)"
 
-                        if not selected_pks: # If all selected rows had NA DB IDs
+                        if not selected_pks:
                              st.warning("No valid DB IDs in selection for PDF link.")
                              st.button(btn_label, disabled=True, key="pdf_trigger_btn_no_valid_ids")
                         elif st.button(btn_label, key="pdf_trigger_btn"):
@@ -362,8 +349,8 @@ if search_tab_content:
                                         api_url = f"{API_BASE_URL.rstrip('/')}/documents/batch-download-url"
                                         payload = {"document_ids": selected_pks}; headers["Content-Type"] = "application/json"
                                         resp = requests.post(api_url, json=payload, headers=headers, timeout=180)
-                                    else: # Should not happen if selected_pks is not empty
-                                        resp = None
+                                    else:
+                                        resp = None # Should not be reached if selected_pks is not empty
 
                                     if resp:
                                         resp.raise_for_status(); data = resp.json()
@@ -388,14 +375,18 @@ if search_tab_content:
                 if len(sel_df_details) == 1: st.dataframe(sel_df_details.iloc[0])
                 else: st.dataframe(sel_df_details, use_container_width=True)
 
-            else:
+            else: # if not is_valid_selection
                 with col_actions2: st.button("📄 PDF Link", disabled=True, key='pdf_btn_no_sel')
                 st.markdown("---"); st.caption("Select rows for details/download.")
 
         elif load_button_pressed and st.session_state.docs_df.empty:
+            # This case is when the button was pressed, API call was made, but no docs were found.
+            # The warning "No documents found matching your criteria." is already shown inside the data fetching block.
             pass
 
     elif not load_button_pressed and st.session_state.docs_df.empty :
+         # This state is when the tab is selected but no button has been pressed yet
+         # and no data is loaded. The initial info message "Use the filters..." is sufficient.
          pass
 
 # Optional Footer
