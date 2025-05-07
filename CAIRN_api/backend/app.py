@@ -1,4 +1,4 @@
-# backend Start re-write 5.5.25 1.1
+# backend/main.py (Rewritten v1.6)
 
 import os
 import io
@@ -63,48 +63,22 @@ except Exception as e:
 
 # --- Pydantic Schemas (Data Models) ---
 class DocumentOut(BaseModel):
+    # Define fields expected to be returned by the /documents endpoint
+    # Add all relevant fields from your 'files' table that the frontend needs
     id: int
     created_at: Optional[str] = None
     document_id: Optional[str] = None
     document_title: Optional[str] = None
     b2_file_id: Optional[str] = None
     published_date: Optional[str] = None
+    document_author: Optional[str] = None
     org_utility_name: Optional[str] = None
     docket_number: Optional[str] = None
     document_type: Optional[str] = None
-    document_author: Optional[str] = None
-    description: Optional[str] = None
-    # Ensure all other fields from your 'files' table that the frontend might need are listed here
-    # For example:
-    state_region: Optional[str] = None
-    document_subtype: Optional[str] = None
-    rate_impact: Optional[str] = None
-    utility_reform: Optional[str] = None
-    energy_resources: Optional[List[str]] = None # Assuming this could be an array in DB
-    customer_classes: Optional[List[str]] = None # Assuming this could be an array
-    ders: Optional[List[str]] = None # Assuming this could be an array
-    physical_climate_risk: Optional[str] = None # Or bool if it's a boolean
-    additional_keywords: Optional[List[str]] = None # Assuming this could be an array
-    document_url: Optional[str] = None
-    cairn_url: Optional[str] = None
-    tagger: Optional[str] = None
-    date_tagged: Optional[str] = None
-    quality_check: Optional[str] = None
-    local_backup_name: Optional[str] = None
-    file_format: Optional[str] = None
-    processing_notes: Optional[str] = None
-    regulatory_body: Optional[str] = None
-    jurisdiction_type: Optional[str] = None
-    parent_document: Optional[str] = None
-    related_documents: Optional[List[str]] = None
-    replaces_document: Optional[str] = None
-    relationship_types: Optional[List[str]] = None
-    updated_at: Optional[str] = None
-    last_synced_at: Optional[str] = None
-
+    # ... add other fields like state_region, keywords, etc.
 
     class Config:
-        from_attributes = True
+        orm_mode = True # Compatibility if creating from ORM objects (though Supabase client returns dicts)
 
 class DocumentsResponse(BaseModel):
     data: List[DocumentOut]
