@@ -9,12 +9,11 @@ import traceback # For detailed error logging
 
 # ─── Load env & page setup ─────────────────────────────────────────────────────
 load_dotenv()
-# <<< CHANGE 1: Updated default API_BASE_URL as requested >>>
-API_BASE_URL = os.getenv("API_URL", "https://cairn-backend.onrender.com") # Updated default URL as per instructions
+API_BASE_URL = os.getenv("API_URL", "https://cairn-backend.onrender.com") # Default URL
 DOCUMENTS_API_URL = f"{API_BASE_URL.rstrip('/')}/documents"
 st.set_page_config(page_title="CAIRN Finder", layout="wide")
 
-# --- Initialize Session State ---
+# --- Initialize Session State (as per user's reference code) ---
 if 'docs_df' not in st.session_state: st.session_state.docs_df = pd.DataFrame()
 if 'grid_response' not in st.session_state: st.session_state.grid_response = None
 
@@ -25,37 +24,51 @@ with col1:
     except Exception as img_err: st.warning(f"Could not load logo: {img_err}")
 with col2: st.title("CAIRN Document Finder")
 
-# ─── Sidebar filters ───────────────────────────────────────────────────────────
+# ─── Sidebar filters (New Layout, Old Param Handling) ───────────────────────────
 st.sidebar.header("Filters")
-params = {}
-# <<< NOTE: Added 'description' and 'document_author' to the text filter list, although they might not be ideal for free-text search depending on content >>>
-text_cols = ["document_id", "document_title", "description", "document_author", "local_backup_name", "tagger", "file_format", "rate_impact", "quality_check", "regulatory_body", "state_region", "docket_number", "document_type", "org_utility_name", "parent_document", "replaces_document", "document_url", "cairn_url", "processing_notes"]
-for col in text_cols:
-    v = st.sidebar.text_input(col.replace("_", " ").title());
-    if v: params[col] = v
-if d := st.sidebar.date_input("Published Date", value=None, key="pub_date"): params["published_date"] = d.isoformat()
-if d := st.sidebar.date_input("Date Tagged", value=None, key="tag_date"): params["date_tagged"] = d.isoformat()
-if d := st.sidebar.date_input("Last Synced", value=None, key="sync_date"): params["last_synced_at"] = d.isoformat()
-if d := st.sidebar.date_input("Updated At", value=None, key="update_date"): params["updated_at"] = d.isoformat()
-list_cols = ["additional_keywords", "ders", "utility_reform", "customer_classes", "energy_resources", "related_documents", "relationship_types"]
-for col in list_cols:
-    s = st.sidebar.text_input(col.replace("_", " ").title() + " (comma-separated)");
-    if s: params[col] = s
-if st.sidebar.checkbox("Physical Climate Risk"): params["physical_climate_risk"] = "true"
+params = {} # Local params dictionary, populated on each run
+
+# Group 1 Filters
+val = st.sidebar.text_input("Org or Utility Name")
+if val: params["org_utility_name"] = val
+
+val = st.sidebar.text_input("Document Author")
+if val: params["document_author"] = val
+
+val = st.sidebar.text_input("Document Type")
+if val: params["document_type"] = val
+
+val = st.sidebar.text_input("Document Subtype")
+if val: params["document_subtype"] = val
+
+st.sidebar.markdown("---") # Break in the sidebar
+
+# Group 2 Filters
+val = st.sidebar.text_input("State or Region")
+if val: params["state_region"] = val
+
+val = st.sidebar.text_input("Jurisdiction") # Using the new, more user-friendly label
+if val: params["jurisdiction_type"] = val # Maps to the backend parameter name
+
+val = st.sidebar.text_input("Regulatory Body")
+if val: params["regulatory_body"] = val
+
+# "Load Documents" button comes right after "Regulatory Body"
+load_button_pressed = st.sidebar.button("Load Documents", key="load_btn")
+
+# Options section after the "Load Documents" button
 st.sidebar.header("Options")
 params["page"] = st.sidebar.number_input("Page", min_value=1, value=1)
 params["page_size"] = st.sidebar.number_input("Size", min_value=1, max_value=200, value=20)
-load_button_pressed = st.sidebar.button("Load Documents", key="load_btn")
 
-# ─── Main Area with Tabs ───────────────────────────────────────────────────────
-# <<< Using tab names from broken code >>>
+# ─── Main Area with Tabs (Reverted to User's Reference Logic) ───────────────────
 about_tab, search_tab, tags_tab = st.tabs([
     "ℹ️ About CAIRN",
     "🔍 Search Documents",
     "🏷️ Tag Definitions"
 ])
 
-# <<< Content for About Tab from broken code >>>
+# --- Content for About Tab (from user's reference) ---
 with about_tab:
     st.markdown("""
     ## What is CAIRN?
@@ -85,108 +98,73 @@ with about_tab:
 
     ### Getting Started: How to Query the CAIRN Database
 
-    1.  Review the **🏷️ Tag Definitions** tab to understand the available search fields and common terms.
+    1.  Review the **🏷️ Tag Definitions** tab to understand the available search fields and common terms. Currently search only matches EXACTLY.
     2.  Click on the **🔍 Search Documents** tab.
     3.  Use the **filters in the sidebar** on the left to narrow down the vast collection of documents.
     4.  Once filters are set, click the **"Load Documents"** button in the sidebar.
     5.  The table will populate within the **🔍 Search Documents** tab. You can then sort, filter, search, download, and view details.
     """)
 
-# <<< Content for Tags Tab from broken code >>>
+# --- Content for Tags Tab (MODIFIED SECTION) ---
 with tags_tab:
     st.info("""
-    This table explains the different fields (tags) used to categorize documents in CAIRN.
-    You can use the filters in the sidebar (under the '🔍 Search Documents' tab) to search based on these fields and terms.
-    Note: Field names here match the filter labels in the sidebar. The underlying database field names might differ slightly (e.g., underscores).
+    This table displays the primary filter categories available in the sidebar for searching documents.
+    For each category, the top terms (and their occurrence counts in the dataset) are listed to provide insight into common values.
+    Use these filter categories in the sidebar on the '🔍 Search Documents' tab to refine your search.
     """)
 
-    # Define the tag data (based on sidebar filters and common fields)
-    # Match these 'Tag Name (Filter)' values to the labels used in st.sidebar.text_input etc.
-    # <<< Adjusted to include 'description' and 'document_author' as they are in the new code's sidebar >>>
-    tag_data = {
-        'Tag Name (Filter)': [
-            "Document Id", "Document Title", "Description", "Published Date", "Document Author", "Org Utility Name",
-            "Docket Number", "Document Type", "Document Subtype", "Document Url", "Cairn Url",
-            "Rate Impact", "Utility Reform", "Energy Resources", "Customer Classes", "Ders",
-            "Physical Climate Risk", "Additional Keywords", "Tagger", "Date Tagged", "Quality Check",
-            "Processing Notes", "State Region", "Regulatory Body", "Jurisdiction Type",
-            "Parent Document", "Related Documents", "Replaces Document", "Relationship Types",
-            "File Format", "Local Backup Name",
-            # Added Date/Time filters from new code sidebar
-            "Last Synced", "Updated At",
-            # "DB ID" and "Created At" are usually not filters but results
+    # Data for the new Tag Definitions Tab based on the "Top 3 Table"
+    # Note: <br> from your input has been replaced with \n for better display in st.dataframe
+    top_3_data = {
+        'Filter Name (Category)': [
+            "Org or Utility Name",
+            "Document Author",
+            "Document Type",
+            "Document Subtype",
+            "State or Region",
+            "Jurisdiction",
+            "Regulatory Body"
         ],
-        'Description': [
-            "Unique identifier for the document record (e.g., C250001)",
-            "Full official title of the document",
-            "Brief summary or description of the document content", # Added Description
-            "The date the document was published or filed (YYYY-MM-DD)",
-            "The individual, firm, or entity that authored the document",
-            "The primary utility, organization, or agency associated with the document",
-            "The official proceeding number (e.g., UE-230810)",
-            "The main category or classification of the document",
-            "A more specific sub-category of the document",
-            "Direct URL link to the original source document webpage (if available)",
-            "Direct URL link to the document file stored within the CAIRN system (if generated/available)",
-            "Does the document primarily discuss ratepayer bill or tariff impacts? (e.g., Y/N/Partial/Text)",
-            "Does the document primarily focus on utility governance or business model changes? (e.g., Y/N/Partial/Text)",
-            "Comma-separated list of energy resource types discussed (e.g., gas, solar, storage, EE)",
-            "Comma-separated list of customer classes addressed (e.g., residential, C&I, low-income)",
-            "Comma-separated list related to Distributed Energy Resources (DERs) (e.g., DER, interconnection)",
-            "Does the document primarily discuss physical climate risks like wildfire, heat, floods? (boolean 'true' or filter text)",
-            "Comma-separated list of additional relevant keywords for searching",
-            "Identifier for the person or team who applied the tags",
-            "The date the tags were applied or last updated (YYYY-MM-DD)",
-            "Has the accuracy of the document's metadata been verified? (e.g., Y/N/Pending)",
-            "Internal notes regarding document processing, OCR issues, or anomalies",
-            "The primary geographic state or region the document pertains to",
-            "The primary regulatory agency with jurisdiction (e.g., PUC, FERC)",
-            "The level of regulatory authority (e.g., State-Level, National)",
-            "The File ID of a parent document this document belongs to (e.g., for appendices)",
-            "Comma-separated File IDs of other documents related to this one",
-            "The File ID of a document that this document replaces or supersedes",
-            "Describes the relationship to parent/related documents (e.g., Appendix, Comment)",
-            "The format of the file (e.g., PDF, DOCX)",
-            "Internal filename used for local backup storage",
-            "Date the document record was last synchronized with its source (YYYY-MM-DD)", # Added Last Synced
-            "Date the document record was last modified in the database (YYYY-MM-DD)", # Added Updated At
-        ],
-        'Filter Input Type / Format': [
-            "Text", "Text", "Text", "Date Picker", "Text", "Text (e.g., Puget Sound Energy (PSE))",
-            "Text (e.g., UE-#####)", "Text", "Text", "Text (URL)", "Text (URL)",
-            "Text (e.g., Y, N)", "Text (e.g., Y, N)", "Text (comma-separated, e.g., solar, storage)", "Text (comma-separated, e.g., residential, C&I)", "Text (comma-separated)",
-            "Checkbox (sends 'true' if checked)", "Text (comma-separated)", "Text", "Date Picker", "Text (e.g., Y, N)",
-            "Text", "Text (e.g., WA, CA)", "Text (e.g., WA_UTC)", "Text",
-            "Text (File ID)", "Text (comma-separated File IDs)", "Text (File ID)", "Text (comma-separated)",
-            "Text (e.g., PDF)", "Text",
-            "Date Picker", "Date Picker", # Added for Last Synced, Updated At
+        'Top 3 Examples - Search Using Exact Matches': [
+            "1. Seattle City Light (SCL) \n | Puget Sound Energy (PSE) | Avista WA | SnoPUD   ", 
+            "1. Seattle City Light (SCL) | \n PNUCC ",
+            "1. IRP/ISP \n | Rate Schedule ",
+            "1. Rate Summary | \n IRP | Utility Association ", # Combined 2nd/3rd if counts are same
+            "1. WA \n | PNW Region ",
+            "1. State Level \n Regional Level ",
+            "1. WA UTC |\n BPA / PNW "
         ]
     }
-    tag_definitions_df = pd.DataFrame(tag_data)
+    tags_display_df = pd.DataFrame(top_3_data)
 
-    # Display the DataFrame using st.dataframe for better scrolling and width handling
-    st.dataframe(tag_definitions_df, use_container_width=True, height=600)
+    # Display the DataFrame
+    # st.dataframe will typically wrap text containing newline characters (\n)
+    st.dataframe(tags_display_df, use_container_width=True, hide_index=True)
 
-
-# ─── Search Tab Content ────────────────────────────────────────────────────────
+    st.markdown("""
+    ---
+    **Understanding the Table:**
+    * **Filter Name (Category):** These are the labels for the filters you can use in the sidebar to narrow down your document search.
+    * **Top 3 Examples (with count):** These are the most frequently occurring terms found in the dataset for that specific filter category. The number in parentheses (e.g., "(9)") indicates how many documents are associated with that term. This helps you understand common values and data distribution.
+    """)
+# ─── Search Tab Content (Reverted to User's Reference Logic) ───────────────────
 with search_tab:
-    # <<< Using Info text from broken code >>>
     st.info("Use the filters in the sidebar and click 'Load Documents' to fetch and display data here.")
 
-    # --- Data Fetching ---
     if load_button_pressed:
         with st.spinner('Fetching documents...'):
             try:
-                active_params = {k: v for k, v in params.items() if v is not None and v != ''}
+                # active_params uses the local 'params' dictionary populated by the sidebar
+                active_params = {k: v for k, v in params.items() if v is not None and str(v).strip() != ''}
                 resp = requests.get(DOCUMENTS_API_URL, params=active_params, timeout=45)
                 resp.raise_for_status()
                 docs_data = resp.json()
                 docs = docs_data.get("data", [])
                 total_docs = docs_data.get("total_count", len(docs))
-                current_page = active_params.get('page', 1); page_size = active_params.get('page_size', 20)
-                total_pages = (total_docs + page_size - 1) // page_size if total_docs > 0 else 1
-                # <<< Using write format from broken code >>>
-                st.write(f"Showing **{len(docs)}** of **{total_docs}** documents (Page {current_page} of {total_pages})")
+                current_page_val = active_params.get('page', 1)
+                page_size_val = active_params.get('page_size', 20)
+                total_pages = (total_docs + page_size_val - 1) // page_size_val if total_docs > 0 else 1
+                st.write(f"Showing **{len(docs)}** of **{total_docs}** documents (Page {current_page_val} of {total_pages})")
 
                 if not docs:
                     st.warning("No documents found matching your criteria."); st.session_state.docs_df = pd.DataFrame()
@@ -197,10 +175,9 @@ with search_tab:
                         if lc in df.columns and df[lc].apply(lambda x: isinstance(x, list)).any():
                             df[lc] = df[lc].apply(lambda x: ", ".join(map(str, x)) if isinstance(x, list) else x)
 
-                    # <<< CHANGE 2a: Added 'description' and 'document_author' to the desired column order >>>
                     cols_order = [
-                        "id", "document_id", "document_title", "description", # Added description
-                        "published_date", "document_author", # Added document_author
+                        "id", "document_id", "document_title", "description",
+                        "published_date", "document_author",
                         "org_utility_name", "docket_number", "document_type", "document_subtype",
                         "state_region", "rate_impact", "utility_reform", "energy_resources",
                         "customer_classes", "ders", "physical_climate_risk", "additional_keywords",
@@ -212,11 +189,10 @@ with search_tab:
                     cols_to_display = [col for col in cols_order if col in df.columns]
                     df_ordered = df[cols_to_display]
 
-                    # <<< CHANGE 2b: Added mappings for 'description' and 'document_author' >>>
                     rename_map = {
                         "id": "DB ID", "document_id": "File ID", "local_backup_name": "Local Backup Name",
-                        "document_title": "Document Title", "description": "Description", # Added description
-                        "published_date": "Published Date", "document_author": "Document Author", # Added document_author
+                        "document_title": "Document Title", "description": "Description",
+                        "published_date": "Published Date", "document_author": "Document Author",
                         "org_utility_name": "Org/Utility Name", "docket_number": "Docket Number",
                         "document_type": "Document Type", "document_subtype": "Document Subtype",
                         "document_url": "Document URL", "cairn_url": "CAIRN URL", "b2_file_id": "B2 File ID",
@@ -243,89 +219,73 @@ with search_tab:
                 st.error(f"Processing error: {e}"); st.error(traceback.format_exc())
                 st.session_state.docs_df = pd.DataFrame()
 
-    # --- Display AgGrid and Actions ---
+    # --- Display AgGrid and Actions (this part is outside the `if load_button_pressed` block in user's reference) ---
+    # It relies on st.session_state.docs_df being populated.
     if not st.session_state.docs_df.empty:
         df_display_base = st.session_state.docs_df
-        # <<< Quick search input from new code, using key from broken code if desired (using new key is fine too) >>>
-        search = st.text_input("🔎 Quick Search current results", key="quick_search_input");
-        if search: df_display_final = df_display_base[df_display_base.apply(lambda r: r.astype(str).str.contains(search, case=False, na=False).any(), axis=1)]
+        search_val = st.text_input("🔎 Quick Search current results", key="quick_search_input"); # Renamed variable
+        if search_val: df_display_final = df_display_base[df_display_base.apply(lambda r: r.astype(str).str.contains(search_val, case=False, na=False).any(), axis=1)]
         else: df_display_final = df_display_base
 
-        # --- Configure AgGrid ---
         gb = GridOptionsBuilder.from_dataframe(df_display_final)
-        # Use default column config (valueGetter removed)
         gb.configure_default_column(groupable=True, filter="agTextColumnFilter", filterParams={"debounceMs": 300}, sortable=True, resizable=True, wrapText=True, autoHeight=True, minWidth=150)
         link_cols = ["Document URL", "CAIRN URL"]
         for link_col in link_cols:
              if link_col in df_display_final.columns: gb.configure_column(link_col, cellRenderer='''function(params){return params.value?'<a href="'+params.value+'" target="_blank" rel="noopener noreferrer">'+params.value+'</a>':''}''', minWidth=250)
-        # <<< NOTE: Configure specific columns like Description if needed (e.g., longer minWidth) >>>
         if "Description" in df_display_final.columns:
-             gb.configure_column("Description", minWidth=300) # Example: Make Description column wider
+             gb.configure_column("Description", minWidth=300)
         gb.configure_side_bar(filters_panel=True, columns_panel=True)
+        # params.get('page_size', 20) is from the local params dict defined in the sidebar for the current run
         gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=params.get('page_size', 20))
-        # <<< Selection mode from new code >>>
         gb.configure_selection(selection_mode="multiple", use_checkbox=True, header_checkbox=True, rowMultiSelectWithClick=False)
         gb.configure_grid_options(domLayout='normal')
         grid_opts = gb.build()
 
-        # --- Render AgGrid ---
         st.session_state.grid_response = AgGrid(
-            df_display_final, gridOptions=grid_opts, key='document_grid_main', # Using new code key
+            df_display_final, gridOptions=grid_opts, key='document_grid_main',
             enable_enterprise_modules=False,
-            # <<< Update/Data modes from new code >>>
             update_mode=GridUpdateMode.MODEL_CHANGED | GridUpdateMode.SELECTION_CHANGED,
-            data_return_mode=DataReturnMode.AS_INPUT, # This mode returns DataFrame for selected_rows
+            data_return_mode=DataReturnMode.AS_INPUT,
             fit_columns_on_grid_load=False, height=600, width='100%',
-            # <<< reload_data=False from new code, allow_unsafe_jscode=True >>>
             reload_data=False, allow_unsafe_jscode=True
         )
 
-        # --- Actions Section ---
         st.markdown("---")
         col_actions1, col_actions2 = st.columns(2)
 
-        # --- Download Table View (CSV) ---
         with col_actions1:
-            out_df_view = pd.DataFrame(st.session_state.grid_response["data"]) # Data reflects grid view (sort/filter)
-            if not out_df_view.empty:
+            # Ensure grid_response["data"] is valid before processing
+            current_grid_data = st.session_state.grid_response.get("data") if st.session_state.grid_response else None
+            if isinstance(current_grid_data, pd.DataFrame) and not current_grid_data.empty:
+                out_df_view = current_grid_data
                 ts = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S'); csv_fn = f"cairn_{ts}.csv"
                 csv_data = out_df_view.to_csv(index=False).encode('utf-8')
-                # <<< Using download button label from new code >>>
                 st.download_button(label="⬇️ CSV", data=csv_data, file_name=csv_fn, mime="text/csv", key='csv_btn')
-            else: st.button("⬇️ CSV", disabled=True, key='csv_btn_dis')
+            else:
+                st.button("⬇️ CSV", disabled=True, key='csv_btn_dis')
 
-        # --- Retrieve selected rows safely ---
+
         selected_rows_data = None
         grid_response_current = st.session_state.get('grid_response')
         if grid_response_current:
-            selected_rows_data = grid_response_current.get("selected_rows") # This is a DataFrame
+            selected_rows_data = grid_response_current.get("selected_rows")
 
-        # --- *** CORRECTED CHECK: Use DataFrame properties *** ---
         is_valid_selection = isinstance(selected_rows_data, pd.DataFrame) and not selected_rows_data.empty
 
-        # Optional Debugging (can be removed later)
-        # st.write("--- Debug Selection Info ---")
-        # st.write(f"selected_rows type: {type(selected_rows_data)}")
-        # if isinstance(selected_rows_data, pd.DataFrame): st.dataframe(selected_rows_data.head())
-        # else: st.write(f"selected_rows value: {str(selected_rows_data)[:500]}")
-        # st.write(f"Condition `isinstance(df) and not df.empty` is: {is_valid_selection}")
-        # st.write("--- End Debug Selection Info ---")
-        # --- *** END CORRECTED CHECK *** ---
-
-
-        # --- Check the evaluated condition ---
         if is_valid_selection:
-            # --- PDF Download Logic ---
             with col_actions2:
-                # Use the DataFrame directly
                 sel_df = selected_rows_data
                 if "DB ID" not in sel_df.columns:
-                    st.error("Error: 'DB ID' missing.")
+                    st.error("Error: 'DB ID' missing.") # Error from user's reference
                     st.button("📄 PDF Link", disabled=True, key='pdf_btn_no_id')
                 else:
-                    selected_pks = sel_df["DB ID"].tolist(); num_sel = len(selected_pks)
+                    selected_pks = sel_df["DB ID"].dropna().tolist() # Added dropna for robustness
+                    num_sel = len(selected_pks)
                     btn_label = f"📄 PDF Link ({num_sel} selected)"
-                    if st.button(btn_label, key="pdf_trigger_btn"):
+
+                    if not selected_pks: # Handle case where selection might result in no valid DB IDs
+                        st.button(btn_label, disabled=True, key="pdf_trigger_btn_no_valid_pks")
+                    elif st.button(btn_label, key="pdf_trigger_btn"):
                         with st.spinner("Generating link..."):
                             api_url = None; payload = None; headers = {"Accept": "application/json"}
                             dl_url = None; dl_fn = "download"
@@ -337,18 +297,18 @@ with search_tab:
                                     api_url = f"{API_BASE_URL.rstrip('/')}/documents/batch-download-url"
                                     payload = {"document_ids": selected_pks}; headers["Content-Type"] = "application/json"
                                     resp = requests.post(api_url, json=payload, headers=headers, timeout=180)
-                                else: resp = None
+                                else:
+                                    resp = None
 
                                 if resp:
                                     resp.raise_for_status(); data = resp.json()
                                     rel_url = data.get("url"); dl_fn = data.get("filename", "cairn_dl")
                                     if rel_url:
-                                        # <<< Use the potentially updated API_BASE_URL >>>
                                         dl_url = f"{API_BASE_URL.rstrip('/')}{rel_url}"
                                         st.success("Link ready!")
                                         st.markdown(f'<a href="{dl_url}" target="_blank">{dl_fn}</a>', unsafe_allow_html=True)
                                         st.caption("Link may expire.")
-                                    else: st.error("API did not return a URL."); st.json(data) # Corrected error message
+                                    else: st.error("API did not return a URL."); st.json(data)
                             except requests.exceptions.RequestException as e:
                                 st.error(f"API Error: {e}")
                                 if hasattr(e, 'response') and e.response is not None:
@@ -356,25 +316,23 @@ with search_tab:
                                     try: st.error("API Detail:"); st.json(e.response.json())
                                     except ValueError: st.error(f"API Resp: {e.response.text[:500]}...")
                             except Exception as e: st.error(f"Error: {e}"); st.error(traceback.format_exc())
-
-            # --- Detail pane ---
             st.markdown("---")
-            # Use the DataFrame directly, drop AgGrid internal column if present
             sel_df_details = selected_rows_data.drop(columns=["_selectedRowNodeInfo"], errors="ignore")
-            # <<< Using header from broken code >>>
             st.markdown("### 📄 Selected Document Details")
-            # <<< Using display logic from broken code (transpose for single record) >>>
             if len(sel_df_details) == 1: st.dataframe(sel_df_details.iloc[0])
             else: st.dataframe(sel_df_details, use_container_width=True)
-
-        else:
-            # --- Handle No Selection ---
+        else: # if not is_valid_selection
             with col_actions2: st.button("📄 PDF Link", disabled=True, key='pdf_btn_no_sel')
             st.markdown("---"); st.caption("Select rows for details/download.")
 
-    elif load_button_pressed and st.session_state.docs_df.empty: pass # Handled by the warning message inside the 'if load_button_pressed' block
-    # Initial state (before button press) handled implicitly - nothing shown in search tab except info text
+    elif load_button_pressed and st.session_state.docs_df.empty:
+        # This case is when the button was pressed, API call was made (or attempted),
+        # but no docs were found or an error occurred.
+        # Warnings/errors are shown inside the data fetching block.
+        pass
+    # else: # Initial state: load_button_pressed is False and docs_df is empty.
+        # The st.info message at the top of the 'with search_tab:' block is displayed.
 
-# Optional Footer (Uncomment if desired)
+# Optional Footer
 # st.markdown("---")
 # st.caption("CAIRN Project | Powered by Streamlit")
