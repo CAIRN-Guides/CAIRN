@@ -19,7 +19,22 @@ from supabase import create_client, Client
 from postgrest.exceptions import APIError
 from b2sdk.v2 import B2Api, InMemoryAccountInfo, Bucket
 from b2sdk.v2 import exception as b2_exceptions
+import supabase
+import postgrest # May need to import directly if not already
+# ... other imports ...
 
+logger.info(f"Supabase-py version: {supabase.__version__}")
+try:
+    import importlib.metadata
+    logger.info(f"PostgREST-py version (via importlib.metadata): {importlib.metadata.version('postgrest')}")
+except Exception:
+    try:
+        logger.info(f"PostgREST-py version (via __version__): {postgrest.__version__}")
+    except Exception as e:
+        logger.error(f"Could not determine postgrest-py version: {e}")
+
+# --- Initialize External Clients ---
+# ... rest of your app setup ...
 # --- Environment Loading ---
 load_dotenv()
 
