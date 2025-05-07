@@ -105,79 +105,48 @@ with about_tab:
     5.  The table will populate within the **🔍 Search Documents** tab. You can then sort, filter, search, download, and view details.
     """)
 
-# --- Content for Tags Tab (from user's reference) ---
+# --- Content for Tags Tab (MODIFIED SECTION) ---
 with tags_tab:
     st.info("""
-    This table explains the different fields (tags) used to categorize documents in CAIRN.
-    You can use the filters in the sidebar (under the '🔍 Search Documents' tab) to search based on these fields and terms.
-    Note: Field names here match the filter labels in the sidebar. The underlying database field names might differ slightly (e.g., underscores).
+    This table displays the primary filter categories available in the sidebar for searching documents.
+    For each category, the top terms (and their occurrence counts in the dataset) are listed to provide insight into common values.
+    Use these filter categories in the sidebar on the '🔍 Search Documents' tab to refine your search.
     """)
 
-    # Define the tag data (based on user's reference code for this tab)
-    # This list should correspond to the filters that *were* available in the user's reference code's sidebar.
-    # Since the current sidebar is simplified, this list might be more extensive than the active filters.
-    # For consistency with the user's *old* "Tag Definitions" tab:
-    tag_data = {
-        'Tag Name (Filter)': [
-            "Document Id", "Document Title", "Description", "Published Date", "Document Author", "Org Utility Name",
-            "Docket Number", "Document Type", "Document Subtype", "Document Url", "Cairn Url",
-            "Rate Impact", "Utility Reform", "Energy Resources", "Customer Classes", "Ders",
-            "Physical Climate Risk", "Additional Keywords", "Tagger", "Date Tagged", "Quality Check",
-            "Processing Notes", "State Region", "Regulatory Body", "Jurisdiction Type",
-            "Parent Document", "Related Documents", "Replaces Document", "Relationship Types",
-            "File Format", "Local Backup Name",
-            "Last Synced", "Updated At",
+    # Data for the new Tag Definitions Tab based on the "Top 3 Table"
+    # Note: <br> from your input has been replaced with \n for better display in st.dataframe
+    top_3_data = {
+        'Filter Name (Category)': [
+            "Org or Utility Name",
+            "Document Author",
+            "Document Type",
+            "Document Subtype",
+            "State or Region",
+            "Jurisdiction",
+            "Regulatory Body"
         ],
-        'Description': [
-            "Unique identifier for the document record (e.g., C250001)",
-            "Full official title of the document",
-            "Brief summary or description of the document content",
-            "The date the document was published or filed (YYYY-MM-DD)",
-            "The individual, firm, or entity that authored the document",
-            "The primary utility, organization, or agency associated with the document",
-            "The official proceeding number (e.g., UE-230810)",
-            "The main category or classification of the document",
-            "A more specific sub-category of the document",
-            "Direct URL link to the original source document webpage (if available)",
-            "Direct URL link to the document file stored within the CAIRN system (if generated/available)",
-            "Does the document primarily discuss ratepayer bill or tariff impacts? (e.g., Y/N/Partial/Text)",
-            "Does the document primarily focus on utility governance or business model changes? (e.g., Y/N/Partial/Text)",
-            "Comma-separated list of energy resource types discussed (e.g., gas, solar, storage, EE)",
-            "Comma-separated list of customer classes addressed (e.g., residential, C&I, low-income)",
-            "Comma-separated list related to Distributed Energy Resources (DERs) (e.g., DER, interconnection)",
-            "Does the document primarily discuss physical climate risks like wildfire, heat, floods? (boolean 'true' or filter text)",
-            "Comma-separated list of additional relevant keywords for searching",
-            "Identifier for the person or team who applied the tags",
-            "The date the tags were applied or last updated (YYYY-MM-DD)",
-            "Has the accuracy of the document's metadata been verified? (e.g., Y/N/Pending)",
-            "Internal notes regarding document processing, OCR issues, or anomalies",
-            "The primary geographic state or region the document pertains to",
-            "The primary regulatory agency with jurisdiction (e.g., PUC, FERC)",
-            "The level of regulatory authority (e.g., State-Level, National)",
-            "The File ID of a parent document this document belongs to (e.g., for appendices)",
-            "Comma-separated File IDs of other documents related to this one",
-            "The File ID of a document that this document replaces or supersedes",
-            "Describes the relationship to parent/related documents (e.g., Appendix, Comment)",
-            "The format of the file (e.g., PDF, DOCX)",
-            "Internal filename used for local backup storage",
-            "Date the document record was last synchronized with its source (YYYY-MM-DD)",
-            "Date the document record was last modified in the database (YYYY-MM-DD)",
-        ],
-        'Filter Input Type / Format': [
-            "Text", "Text", "Text", "Date Picker", "Text", "Text (e.g., Puget Sound Energy (PSE))",
-            "Text (e.g., UE-#####)", "Text", "Text", "Text (URL)", "Text (URL)",
-            "Text (e.g., Y, N)", "Text (e.g., Y, N)", "Text (comma-separated, e.g., solar, storage)", "Text (comma-separated, e.g., residential, C&I)", "Text (comma-separated)",
-            "Checkbox (sends 'true' if checked)", "Text (comma-separated)", "Text", "Date Picker", "Text (e.g., Y, N)",
-            "Text", "Text (e.g., WA, CA)", "Text (e.g., WA_UTC)", "Text",
-            "Text (File ID)", "Text (comma-separated File IDs)", "Text (File ID)", "Text (comma-separated)",
-            "Text (e.g., PDF)", "Text",
-            "Date Picker", "Date Picker",
+        'Top 3 Examples (with count)': [
+            "1. Seattle City Light (SCL) (9)\n2. Puget Sound Energy (PSE) (8)",
+            "1. Seattle City Light (SCL) (9)\n2. PNUCC (7)",
+            "1. IRP/ISP (22)\n2. Rate Schedule (13)",
+            "1. Rate Summary (8)\n2. IRP (6), Utility Association (6)", # Combined 2nd/3rd if counts are same
+            "1. WA (32)\n2. PNW Region (9)",
+            "1. State Level (45)\n2. Regional Level (9)",
+            "1. WA UTC (33)\n2. BPA / PNW (9)"
         ]
     }
-    tag_definitions_df = pd.DataFrame(tag_data)
-    st.dataframe(tag_definitions_df, use_container_width=True, height=600)
+    tags_display_df = pd.DataFrame(top_3_data)
 
+    # Display the DataFrame
+    # st.dataframe will typically wrap text containing newline characters (\n)
+    st.dataframe(tags_display_df, use_container_width=True, hide_index=True)
 
+    st.markdown("""
+    ---
+    **Understanding the Table:**
+    * **Filter Name (Category):** These are the labels for the filters you can use in the sidebar to narrow down your document search.
+    * **Top 3 Examples (with count):** These are the most frequently occurring terms found in the dataset for that specific filter category. The number in parentheses (e.g., "(9)") indicates how many documents are associated with that term. This helps you understand common values and data distribution.
+    """)
 # ─── Search Tab Content (Reverted to User's Reference Logic) ───────────────────
 with search_tab:
     st.info("Use the filters in the sidebar and click 'Load Documents' to fetch and display data here.")
