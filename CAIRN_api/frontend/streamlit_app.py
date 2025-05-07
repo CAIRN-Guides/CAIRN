@@ -126,7 +126,7 @@ with tags_tab:
             "Regulatory Body"
         ],
         'Top 3 Examples (with count)': [
-            "1. Seattle City Light (SCL) (9)\n2. Puget Sound Energy (PSE) (8)",
+            "1. Seattle City Light (SCL) (9)\n2. Puget Sound Energy (PSE) (8) 3. Avista WA, 4. SnoPUD   ", 
             "1. Seattle City Light (SCL) (9)\n2. PNUCC (7)",
             "1. IRP/ISP (22)\n2. Rate Schedule (13)",
             "1. Rate Summary (8)\n2. IRP (6), Utility Association (6)", # Combined 2nd/3rd if counts are same
