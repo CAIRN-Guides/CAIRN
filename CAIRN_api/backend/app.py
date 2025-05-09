@@ -419,10 +419,3 @@ async def serve_batch_zip_endpoint(pks_query_param: str, db: Client = Depends(ge
                 yield chunk
     return StreamingResponse(zip_content_streamer(), headers=response_headers)
 
-# --- Main execution (for local testing if needed) ---
-# if __name__ == "__main__":
-#     import uvicorn
-#     if not all([os.getenv("B2_APP_KEY_ID"), os.getenv("B2_APP_KEY"), os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY")]):
-#         print("ERROR: B2_APP_KEY_ID, B2_APP_KEY, SUPABASE_URL, and SUPABASE_SERVICE_ROLE_KEY environment variables must be set.")
-#     else:
-#         uvicorn.run("your_module_name_if_different:app", host="0.0.0.0", port=8000, reload=True) # Replace your_module_name_if_different
