@@ -1,4 +1,3 @@
-# b2 debugging build 5.8.25
 import os
 import httpx # HTTP client for making API requests
 import asyncio # For asynchronous operations and locks
@@ -8,30 +7,29 @@ from typing import Optional, Dict, Any, List, AsyncGenerator
 import io # For in-memory file operations (e.g., zipping)
 import zipfile # For creating ZIP archives
 
-from fastapi import FastAPI, Request, HTTPException, Depends
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, Request, HTTPException, Depends, Query
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel # For request body validation
 
 from supabase import create_client, Client # Supabase Python client
+from postgrest import APIResponse as PostgrestAPIResponse # For type hinting Supabase responses
 
 # --- Configuration & Globals ---
 
-# Configure logging (adjust as per your existing setup)
-# logging.basicConfig(level=logging.INFO) # Basic config if not already set
-logger = logging.getLogger("app") # Assuming your logger is named "app"
+# Configure logging 
+# logging.basicConfig(level=logging.INFO) 
+logger = logging.getLogger("app") 
 
 # Load B2 credentials from environment variables (matching Render variable names)
-B2_APPLICATION_KEY_ID = os.getenv("B2_APP_KEY_ID") # Updated from B2_APPLICATION_KEY_ID
-B2_APPLICATION_KEY = os.getenv("B2_APP_KEY")       # Updated from B2_APPLICATION_KEY
+B2_APPLICATION_KEY_ID = os.getenv("B2_APP_KEY_ID") 
+B2_APPLICATION_KEY = os.getenv("B2_APP_KEY")       
 B2_API_AUTHORIZE_URL = "https://api.backblazeb2.com/b2api/v2/b2_authorize_account"
 
 # Load Supabase credentials from environment variables (matching Render variable names)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-# Using SUPABASE_SERVICE_ROLE_KEY for backend operations
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") 
 
 # Initialize Supabase client
-# Ensure SUPABASE_URL and SUPABASE_KEY (SUPABASE_SERVICE_ROLE_KEY from env) are set
 supabase_client: Optional[Client] = None
 if SUPABASE_URL and SUPABASE_KEY:
     try:
@@ -39,7 +37,7 @@ if SUPABASE_URL and SUPABASE_KEY:
         logger.info("Supabase client initialized successfully using SERVICE_ROLE_KEY.")
     except Exception as e:
         logger.error(f"Failed to initialize Supabase client: {e}", exc_info=True)
-        supabase_client = None # Ensure it's None if initialization fails
+        supabase_client = None 
 else:
     logger.warning("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables not set. Supabase functionality will be impaired.")
 
@@ -50,44 +48,35 @@ async def get_supabase_client() -> Client:
         raise HTTPException(status_code=503, detail="Database service is not configured or unavailable.")
     return supabase_client
 
-# --- Backblaze B2 Management ---
+# --- Backblaze B2 Management (Identical to previous version) ---
 
 class B2AuthData:
-    """
-    Holds Backblaze B2 authorization details and manages token validity.
-    """
     def __init__(self, data: Dict[str, Any]):
         self.account_id: str = data["accountId"]
         self.api_url: str = data["apiUrl"] 
         self.authorization_token: str = data["authorizationToken"]
         self.download_url: str = data["downloadUrl"] 
         self.token_obtained_at: float = time.time()
-        self.token_validity_duration: float = 23 * 60 * 60  # 23 hours in seconds
+        self.token_validity_duration: float = 23 * 60 * 60
 
     def is_token_expired(self) -> bool:
-        """Checks if the current authorization token has expired."""
         return (time.time() - self.token_obtained_at) > self.token_validity_duration
 
 class B2Manager:
-    """
-    Manages Backblaze B2 authorization and file download operations.
-    """
     _auth_data: Optional[B2AuthData] = None
     _lock = asyncio.Lock()
 
     @classmethod
     async def _authorize(cls) -> None:
-        # Uses B2_APPLICATION_KEY_ID and B2_APPLICATION_KEY which are now mapped to B2_APP_KEY_ID and B2_APP_KEY from env
         if not B2_APPLICATION_KEY_ID or not B2_APPLICATION_KEY:
             logger.error("B2_APP_KEY_ID or B2_APP_KEY is not configured in environment variables.")
             raise HTTPException(status_code=503, detail="B2 service is not configured by the administrator.")
-
         logger.info("Attempting to authorize with Backblaze B2...")
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(
                     B2_API_AUTHORIZE_URL,
-                    auth=(B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY) # These now correctly point to B2_APP_KEY_ID and B2_APP_KEY
+                    auth=(B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY)
                 )
                 response.raise_for_status()
                 auth_response_data = response.json()
@@ -160,8 +149,7 @@ app = FastAPI(
 
 @app.on_event("startup")
 async def startup_event():
-    """Handles application startup events, like initial B2 authorization."""
-    if B2_APPLICATION_KEY_ID and B2_APPLICATION_KEY: # Checks B2_APP_KEY_ID and B2_APP_KEY
+    if B2_APPLICATION_KEY_ID and B2_APPLICATION_KEY: 
         try:
             await B2Manager.get_auth_data(force_refresh=True)
             logger.info("B2 authorization successful on application startup.")
@@ -171,12 +159,10 @@ async def startup_event():
             logger.error(f"B2 authorization failed on startup with an unexpected error: {str(e)}", exc_info=True)
     else:
         logger.warning("B2 credentials (B2_APP_KEY_ID, B2_APP_KEY) are not set. B2 functionality will be impaired.")
-    
-    if supabase_client is None: # Check if Supabase client (using SUPABASE_SERVICE_ROLE_KEY) was initialized
+    if supabase_client is None: 
          logger.warning("Supabase client could not be initialized on startup. Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.")
 
-
-# --- Pydantic Models for Request/Response ---
+# --- Pydantic Models ---
 
 class DocumentIdentifier(BaseModel):
     id: int 
@@ -190,10 +176,16 @@ class DownloadURLResponse(BaseModel):
     url: str
     filename: str
 
+class PaginatedDocumentsResponse(BaseModel):
+    data: List[Dict[str, Any]] # Using Dict for flexibility, can be a Pydantic model too
+    total_count: int
+    page: int
+    page_size: int
+    total_pages: int
+
 # --- Supabase Data Access Functions ---
 
 async def fetch_document_metadata_from_supabase(document_pk: int, db: Client = Depends(get_supabase_client)) -> Optional[Dict[str, Any]]:
-    """Fetches document metadata from Supabase by its primary key (id)."""
     try:
         logger.info(f"Querying Supabase for document PK: {document_pk}")
         response = await db.table("files").select("id, b2_file_id, document_title").eq("id", document_pk).maybe_single().execute()
@@ -207,9 +199,7 @@ async def fetch_document_metadata_from_supabase(document_pk: int, db: Client = D
         logger.error(f"Error fetching document PK {document_pk} from Supabase: {e}", exc_info=True)
         raise HTTPException(status_code=503, detail=f"Database error while fetching document {document_pk}.")
 
-
 async def fetch_batch_document_metadata_from_supabase(document_pks: List[int], db: Client = Depends(get_supabase_client)) -> List[Dict[str, Any]]:
-    """Fetches metadata for multiple documents from Supabase by their primary keys (id)."""
     if not document_pks:
         return []
     try:
@@ -225,8 +215,94 @@ async def fetch_batch_document_metadata_from_supabase(document_pks: List[int], d
         logger.error(f"Error fetching batch documents {document_pks} from Supabase: {e}", exc_info=True)
         raise HTTPException(status_code=503, detail="Database error while fetching batch documents.")
 
-
 # --- API Endpoints ---
+
+@app.get("/")
+async def read_root():
+    """Simple root endpoint."""
+    return {"message": "Welcome to the CAIRN API. See /docs for API documentation."}
+
+@app.get("/documents", response_model=PaginatedDocumentsResponse)
+async def list_documents(
+    request: Request, # To access query parameters not explicitly defined
+    db: Client = Depends(get_supabase_client),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=200, description="Number of items per page"),
+    # Add other explicit query parameters your frontend uses for filtering
+    org_utility_name: Optional[str] = Query(None, description="Filter by organization or utility name"),
+    document_author: Optional[str] = Query(None, description="Filter by document author"),
+    document_type: Optional[str] = Query(None, description="Filter by document type"),
+    document_subtype: Optional[str] = Query(None, description="Filter by document subtype"),
+    state_region: Optional[str] = Query(None, description="Filter by state or region"),
+    jurisdiction_type: Optional[str] = Query(None, description="Filter by jurisdiction type"), # Matches frontend 'Jurisdiction'
+    regulatory_body: Optional[str] = Query(None, description="Filter by regulatory body")
+    # Add more filters as needed, matching your 'files' table columns
+):
+    """
+    Lists documents from the 'files' table with pagination and filtering.
+    """
+    offset = (page - 1) * page_size
+    
+    query = db.table("files").select("*", count="exact") # Select all columns, get exact count
+
+    # Apply filters - using 'ilike' for case-insensitive partial matches
+    # Your frontend sends exact matches based on text input, so 'eq' or 'ilike' could work.
+    # Using 'ilike' for flexibility if user types partial names.
+    filter_map = {
+        "org_utility_name": org_utility_name,
+        "document_author": document_author,
+        "document_type": document_type,
+        "document_subtype": document_subtype,
+        "state_region": state_region,
+        "jurisdiction_type": jurisdiction_type,
+        "regulatory_body": regulatory_body,
+    }
+
+    active_filters_log = {}
+    for column, value in filter_map.items():
+        if value:
+            # For exact match: query = query.eq(column, value)
+            # For case-insensitive partial match:
+            query = query.ilike(column, f"%{value}%")
+            active_filters_log[column] = value
+    
+    if active_filters_log:
+        logger.info(f"Applying filters to /documents: {active_filters_log}")
+    else:
+        logger.info("Fetching /documents with no filters (except pagination).")
+
+    # Apply ordering, e.g., by ID or a date field
+    query = query.order("id", desc=False) # Example: order by id ascending
+    
+    # Apply pagination
+    query = query.range(offset, offset + page_size - 1)
+
+    try:
+        response: PostgrestAPIResponse = await query.execute()
+        
+        if response.data is None: # Should not happen with execute() unless major issue
+            logger.error("Supabase query execution returned None for data.")
+            raise HTTPException(status_code=500, detail="Error fetching documents from database.")
+
+        documents = response.data
+        total_count = response.count if response.count is not None else 0 # Total count matching filters
+
+    except Exception as e:
+        logger.error(f"Error querying documents from Supabase: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail="Database error while listing documents.")
+
+    total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 1
+    
+    logger.info(f"Found {total_count} documents matching criteria. Returning page {page}/{total_pages} with {len(documents)} items.")
+
+    return PaginatedDocumentsResponse(
+        data=documents,
+        total_count=total_count,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages
+    )
+
 
 @app.get("/documents/{document_pk}/download-url", response_model=DownloadURLResponse)
 async def get_single_download_url(document_pk: int, request: Request, db: Client = Depends(get_supabase_client)):
@@ -251,7 +327,7 @@ async def get_single_download_url(document_pk: int, request: Request, db: Client
 @app.get("/api/b2-proxy/{b2_file_id}/{filename}")
 async def b2_proxy_stream_endpoint(request: Request, b2_file_id: str, filename: str):
     logger.info(f"Proxy: Request for B2 File ID: {b2_file_id}, Filename: {filename}")
-    if not (B2_APPLICATION_KEY_ID and B2_APPLICATION_KEY): # Checks B2_APP_KEY_ID and B2_APP_KEY
+    if not (B2_APPLICATION_KEY_ID and B2_APPLICATION_KEY): 
         logger.error("B2 proxy request failed: B2 service not configured on server.")
         raise HTTPException(status_code=503, detail="File download service is not configured.")
     async with httpx.AsyncClient() as client:
@@ -359,10 +435,7 @@ async def serve_batch_zip_endpoint(pks_query_param: str, db: Client = Depends(ge
 # --- Main execution (for local testing if needed) ---
 # if __name__ == "__main__":
 #     import uvicorn
-#     # Ensure B2_APP_KEY_ID, B2_APP_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY are set
 #     if not all([os.getenv("B2_APP_KEY_ID"), os.getenv("B2_APP_KEY"), os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY")]):
 #         print("ERROR: B2_APP_KEY_ID, B2_APP_KEY, SUPABASE_URL, and SUPABASE_SERVICE_ROLE_KEY environment variables must be set.")
 #     else:
-#         # Example: uvicorn your_module_name:app --reload
-#         uvicorn.run(app, host="0.0.0.0", port=8000)
-
+#         uvicorn.run("your_module_name_if_different:app", host="0.0.0.0", port=8000, reload=True) # Replace your_module_name_if_different
