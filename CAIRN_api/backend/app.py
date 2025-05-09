@@ -221,9 +221,14 @@ async def fetch_batch_document_metadata_from_supabase(document_pks: List[int], d
 
 # --- API Endpoints ---
 
-@app.get("/", methods=["GET", "HEAD"]) # Added HEAD method
+# Corrected root endpoint definition using @app.api_route
+@app.api_route("/", methods=["GET", "HEAD"]) 
 async def read_root():
     """Simple root endpoint."""
+    # For HEAD requests, FastAPI typically handles sending an empty body automatically
+    # if a response body is returned by the handler.
+    # If you need specific HEAD logic (e.g. custom headers without a body), 
+    # you might check request.method.
     return {"message": "Welcome to the CAIRN API. See /docs for API documentation."}
 
 @app.get("/documents", response_model=PaginatedDocumentsResponse)
@@ -340,13 +345,9 @@ async def get_batch_download_url(request_payload: BatchDownloadRequest, fastapi_
     pks_param_value = ",".join(map(str, document_pks))
     
     try:
-        # Generate the base path for the route
         base_zip_serve_path = fastapi_request_context.url_for('serve_batch_zip_endpoint')
-        
-        # Manually construct the query string
         query_params = urlencode({"pks_query_param": pks_param_value})
         zip_serve_url_path = f"{base_zip_serve_path}?{query_params}"
-        
         zip_filename = f"cairn_batch_{int(time.time())}.zip"
         logger.info(f"Generated URL for batch ZIP: {zip_serve_url_path}")
         return DownloadURLResponse(url=str(zip_serve_url_path), filename=zip_filename)
