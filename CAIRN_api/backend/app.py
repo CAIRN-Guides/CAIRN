@@ -1,438 +1,368 @@
-# backend Start re-write 5.5.25 1.1
-
+# b2 debugging build 5.8.25
 import os
-import io
-import uuid
-import re
-import zipfile
-import logging  # Import logging first
-import sys      # For sys.version logging
+import httpx # HTTP client for making API requests
+import asyncio # For asynchronous operations and locks
+import time # For token expiry management
+import logging # For logging application events
+from typing import Optional, Dict, Any, List, AsyncGenerator
+import io # For in-memory file operations (e.g., zipping)
+import zipfile # For creating ZIP archives
 
-# --- Logging Setup ---
-# This must be done before any 'logger.info' or other logging calls.
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(name)s - [%(module)s:%(lineno)d] - %(message)s", # Added module/lineno
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-# Create the logger instance that will be used throughout the module
-logger = logging.getLogger(__name__)
-
-# --- Now, other imports can follow ---
-from typing import List, Optional, Any, Dict
-
-import requests
-from fastapi import FastAPI, HTTPException, Query, Depends, Request
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
-from dotenv import load_dotenv
+from pydantic import BaseModel # For request body validation
 
-# Supabase specific imports
-from supabase import create_client, Client as SupabaseClient # Use an alias if 'Client' is too generic
-from postgrest.exceptions import APIError as PostgrestAPIError # Alias to be specific
+from supabase import create_client, Client # Supabase Python client
 
-# B2 specific imports
-from b2sdk.v2 import B2Api, InMemoryAccountInfo, Bucket as B2Bucket # Use an alias
-from b2sdk.v2 import exception as b2_exceptions
+# --- Configuration & Globals ---
 
-# Import supabase and postgrest again if needed specifically for version checking,
-# though accessing __version__ directly from the top-level import is usually fine.
-import supabase
-import postgrest # For version checking
+# Configure logging (adjust as per your existing setup)
+# logging.basicConfig(level=logging.INFO) # Basic config if not already set
+logger = logging.getLogger("app") # Assuming your logger is named "app"
 
-# --- Version Logging ---
-# This section now correctly uses the 'logger' instance defined above.
-logger.info(f"Python version: {sys.version.splitlines()[0]}")
-logger.info(f"Supabase-py version: {supabase.__version__}")
-try:
-    import importlib.metadata
-    logger.info(f"PostgREST-py (postgrest client) version (via importlib.metadata): {importlib.metadata.version('postgrest')}")
-except ImportError:
-    logger.warning("importlib.metadata not available (likely Python < 3.8). Trying direct __version__ for postgrest.")
-    try:
-        # The 'postgrest' module (client library) might not always expose __version__ directly.
-        # This is a fallback and might not work for all package structures.
-        logger.info(f"PostgREST-py (postgrest client) version (via __version__): {postgrest.__version__}")
-    except AttributeError:
-        logger.error("The 'postgrest' client module does not have a __version__ attribute. Version info may be incomplete.")
-    except Exception as e_pv:
-        logger.error(f"Could not determine postgrest client version using __version__: {e_pv}")
-except Exception as e_im: # Catches other errors from importlib.metadata.version like PackageNotFoundError
-    logger.error(f"Could not determine postgrest client version using importlib.metadata: {e_im}")
+# Load B2 credentials from environment variables (matching Render variable names)
+B2_APPLICATION_KEY_ID = os.getenv("B2_APP_KEY_ID") # Updated from B2_APPLICATION_KEY_ID
+B2_APPLICATION_KEY = os.getenv("B2_APP_KEY")       # Updated from B2_APPLICATION_KEY
+B2_API_AUTHORIZE_URL = "https://api.backblazeb2.com/b2api/v2/b2_authorize_account"
 
-
-# --- Environment Loading ---
-load_dotenv()
-logger.info("Environment variables loaded via load_dotenv().")
-
-# --- Configuration ---
+# Load Supabase credentials from environment variables (matching Render variable names)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-B2_KEY_ID = os.getenv("B2_APP_KEY_ID")
-B2_KEY = os.getenv("B2_APP_KEY")
-B2_BUCKET_NAME = os.getenv("B2_BUCKET_NAME")
-B2_TEMP_ZIP_PREFIX = os.getenv("B2_TEMP_ZIP_PREFIX", "temp-zips/").rstrip("/") + "/"
-ZIP_URL_TTL_SECONDS = int(os.getenv("ZIP_URL_TTL_SECONDS", "600"))
-ALLOWED_ORIGINS_STR = os.getenv("ALLOWED_ORIGINS", "http://localhost:8501,http://127.0.0.1:8501")
+# Using SUPABASE_SERVICE_ROLE_KEY for backend operations
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") 
 
-# Ensure critical variables are set
-critical_env_vars = {
-    "SUPABASE_URL": SUPABASE_URL,
-    "SUPABASE_KEY": SUPABASE_KEY,
-    "B2_KEY_ID": B2_KEY_ID,
-    "B2_KEY": B2_KEY,
-    "B2_BUCKET_NAME": B2_BUCKET_NAME,
-}
-missing_vars = [name for name, value in critical_env_vars.items() if not value]
-if missing_vars:
-    error_msg = f"FATAL: Missing required environment variables: {', '.join(missing_vars)}."
-    logger.error(error_msg)
-    raise RuntimeError(error_msg)
-logger.info("Critical environment variables verified.")
+# Initialize Supabase client
+# Ensure SUPABASE_URL and SUPABASE_KEY (SUPABASE_SERVICE_ROLE_KEY from env) are set
+supabase_client: Optional[Client] = None
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        logger.info("Supabase client initialized successfully using SERVICE_ROLE_KEY.")
+    except Exception as e:
+        logger.error(f"Failed to initialize Supabase client: {e}", exc_info=True)
+        supabase_client = None # Ensure it's None if initialization fails
+else:
+    logger.warning("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables not set. Supabase functionality will be impaired.")
 
-# --- Initialize External Clients ---
-try:
-    # 'supabase_client' is the instance of the Supabase client.
-    # The 'supabase' import is the module itself.
-    supabase_client: SupabaseClient = create_client(SUPABASE_URL, SUPABASE_KEY)
-    logger.info("✅ Supabase client initialized.")
+# Dependency to get Supabase client
+async def get_supabase_client() -> Client:
+    if supabase_client is None:
+        logger.error("Supabase client is not available. Check configuration and environment variables (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).")
+        raise HTTPException(status_code=503, detail="Database service is not configured or unavailable.")
+    return supabase_client
 
-    b2_info = InMemoryAccountInfo()
-    b2_api = B2Api(b2_info)
-    b2_api.authorize_account("production", B2_KEY_ID, B2_KEY)
-    b2_bucket: B2Bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME) # Use aliased type
-    B2_DOWNLOAD_URL_BASE = b2_info.get_download_url().rstrip("/")
-    logger.info(f"✅ B2 API client initialized for bucket '{B2_BUCKET_NAME}'. Download base: {B2_DOWNLOAD_URL_BASE}")
+# --- Backblaze B2 Management ---
 
-except Exception as e:
-    logger.exception("FATAL: Failed to initialize Supabase or B2 client.")
-    raise RuntimeError(f"Client initialization failed: {e}")
+class B2AuthData:
+    """
+    Holds Backblaze B2 authorization details and manages token validity.
+    """
+    def __init__(self, data: Dict[str, Any]):
+        self.account_id: str = data["accountId"]
+        self.api_url: str = data["apiUrl"] 
+        self.authorization_token: str = data["authorizationToken"]
+        self.download_url: str = data["downloadUrl"] 
+        self.token_obtained_at: float = time.time()
+        self.token_validity_duration: float = 23 * 60 * 60  # 23 hours in seconds
 
-# --- Pydantic Schemas (Data Models) ---
-class DocumentOut(BaseModel):
-    id: int
-    created_at: Optional[str] = None
-    document_id: Optional[str] = None
-    document_title: Optional[str] = None
-    b2_file_id: Optional[str] = None
-    published_date: Optional[str] = None
-    org_utility_name: Optional[str] = None
-    docket_number: Optional[str] = None
-    document_type: Optional[str] = None
-    document_author: Optional[str] = None # Added field
-    description: Optional[str] = None    # Added field
-    # TODO: Add ALL other fields from your 'files' table that you want to expose.
-    # Example:
-    # state_region: Optional[str] = None
-    # keywords: Optional[List[str]] = None # If it's an array type in DB and JSON
+    def is_token_expired(self) -> bool:
+        """Checks if the current authorization token has expired."""
+        return (time.time() - self.token_obtained_at) > self.token_validity_duration
 
-    class Config:
-        from_attributes = True # Pydantic v2+ style
+class B2Manager:
+    """
+    Manages Backblaze B2 authorization and file download operations.
+    """
+    _auth_data: Optional[B2AuthData] = None
+    _lock = asyncio.Lock()
 
-class DocumentsResponse(BaseModel):
-    data: List[DocumentOut]
-    page: int
-    page_size: int
-    total_count: int
+    @classmethod
+    async def _authorize(cls) -> None:
+        # Uses B2_APPLICATION_KEY_ID and B2_APPLICATION_KEY which are now mapped to B2_APP_KEY_ID and B2_APP_KEY from env
+        if not B2_APPLICATION_KEY_ID or not B2_APPLICATION_KEY:
+            logger.error("B2_APP_KEY_ID or B2_APP_KEY is not configured in environment variables.")
+            raise HTTPException(status_code=503, detail="B2 service is not configured by the administrator.")
 
-class BatchDownloadRequest(BaseModel):
-    document_ids: List[int] = Field(..., description="List of document primary keys (DB IDs) to zip.")
+        logger.info("Attempting to authorize with Backblaze B2...")
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    B2_API_AUTHORIZE_URL,
+                    auth=(B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY) # These now correctly point to B2_APP_KEY_ID and B2_APP_KEY
+                )
+                response.raise_for_status()
+                auth_response_data = response.json()
+                cls._auth_data = B2AuthData(auth_response_data)
+                logger.info(f"Successfully authorized with B2. Download URL base: {cls._auth_data.download_url}")
+            except httpx.HTTPStatusError as e:
+                logger.error(f"B2 authorization failed: HTTP {e.response.status_code} - {e.response.text}")
+                cls._auth_data = None
+                raise HTTPException(status_code=503, detail=f"Failed to authorize with B2 service: {e.response.status_code}")
+            except Exception as e:
+                logger.error(f"B2 authorization failed with an unexpected error: {str(e)}", exc_info=True)
+                cls._auth_data = None
+                raise HTTPException(status_code=503, detail="Unexpected error during B2 authorization.")
 
-class DownloadResponse(BaseModel):
-    url: str = Field(..., description="Relative URL path to the download proxy endpoint.")
-    filename: str = Field(..., description="Suggested filename for the download.")
-    expires_in_seconds: int = Field(..., description="Suggested duration the URL remains valid.")
+    @classmethod
+    async def get_auth_data(cls, force_refresh: bool = False) -> B2AuthData:
+        async with cls._lock:
+            if force_refresh or not cls._auth_data or cls._auth_data.is_token_expired():
+                logger.info(f"B2 token needs refresh (force_refresh={force_refresh}, has_auth={cls._auth_data is not None}, expired={cls._auth_data.is_token_expired() if cls._auth_data else 'N/A'}).")
+                await cls._authorize()
+            if not cls._auth_data:
+                logger.error("B2 authorization data is unavailable after authorization attempt.")
+                raise HTTPException(status_code=503, detail="B2 authorization data unavailable.")
+            return cls._auth_data
+
+    @classmethod
+    async def get_download_headers(cls, force_refresh: bool = False) -> Dict[str, str]:
+        auth_data = await cls.get_auth_data(force_refresh=force_refresh)
+        return {"Authorization": auth_data.authorization_token}
+
+    @classmethod
+    async def get_b2_download_url_base(cls, force_refresh: bool = False) -> str:
+        auth_data = await cls.get_auth_data(force_refresh=force_refresh)
+        return auth_data.download_url
+
+    @classmethod
+    async def download_file_stream(cls, b2_file_id: str, client: httpx.AsyncClient) -> httpx.Response:
+        if not b2_file_id:
+            raise ValueError("b2_file_id cannot be empty for download.")
+        try:
+            download_url_base = await cls.get_b2_download_url_base()
+            headers = await cls.get_download_headers()
+            file_download_url = f"{download_url_base}/b2api/v1/b2_download_file_by_id?fileId={b2_file_id}"
+            logger.info(f"Attempting B2 download for file ID: {b2_file_id}")
+            response = await client.get(file_download_url, headers=headers, timeout=60.0)
+            if response.status_code == 401:
+                logger.warning(f"B2 download for {b2_file_id} received 401. Re-authorizing and retrying...")
+                headers = await cls.get_download_headers(force_refresh=True)
+                response = await client.get(file_download_url, headers=headers, timeout=60.0)
+            response.raise_for_status()
+            logger.info(f"B2 download successful for file ID: {b2_file_id}, status: {response.status_code}")
+            return response
+        except httpx.HTTPStatusError as e:
+            logger.error(f"B2 download HTTPError for ID {b2_file_id}. Status: {e.response.status_code}, Response: {e.response.text[:200]}...")
+            status_code_to_raise = 503 if e.response.status_code == 401 else e.response.status_code
+            raise HTTPException(
+                status_code=status_code_to_raise,
+                detail=f"B2 download service error for file ID {b2_file_id}."
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error during B2 file download for ID {b2_file_id}: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Unexpected error during B2 file download of {b2_file_id}.")
 
 # --- FastAPI Application Setup ---
+
 app = FastAPI(
-    title="CAIRN Document Finder API",
-    version="1.7", # Incremented version for logging fix
-    description="Search document metadata from Supabase and retrieve files via Backblaze B2 proxy.",
-)
-logger.info(f"FastAPI application '{app.title}' version {app.version} initialized.")
-
-# --- CORS Configuration ---
-origins = [o.strip() for o in ALLOWED_ORIGINS_STR.split(",") if o.strip()]
-if not origins:
-    logger.warning("No ALLOWED_ORIGINS specified, defaulting to localhost:8501 and 127.0.0.1:8501")
-    origins = ["http://localhost:8501", "http://127.0.0.1:8501"]
-
-logger.info(f"Allowing CORS origins: {origins}")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],
+    title="CAIRN API",
+    description="API for accessing CAIRN documents and metadata.",
 )
 
-# --- Helper Functions ---
-def sanitize_filename(name: str, max_length: int = 100) -> str:
-    if not name: return "unknown_file"
-    clean = re.sub(r"[^\w\-.\s]", "_", name)
-    clean = re.sub(r"\s+", "_", clean)
-    clean = re.sub(r"_+", "_", clean)
-    clean = clean.strip("_.")
-    if len(clean) > max_length:
-        base, dot, ext = clean.rpartition(".")
-        if dot and len(ext) < 10: # Plausible extension
-            max_base_len = max_length - len(ext) - 1
-            clean = base[:max_base_len].strip('_') + "." + ext
-        else: # No/long extension
-            clean = clean[:max_length].strip('_')
-    return clean or "downloaded_file"
+@app.on_event("startup")
+async def startup_event():
+    """Handles application startup events, like initial B2 authorization."""
+    if B2_APPLICATION_KEY_ID and B2_APPLICATION_KEY: # Checks B2_APP_KEY_ID and B2_APP_KEY
+        try:
+            await B2Manager.get_auth_data(force_refresh=True)
+            logger.info("B2 authorization successful on application startup.")
+        except HTTPException as e:
+            logger.error(f"B2 authorization failed on startup (HTTPException {e.status_code}): {e.detail}. B2 dependent features may fail.")
+        except Exception as e:
+            logger.error(f"B2 authorization failed on startup with an unexpected error: {str(e)}", exc_info=True)
+    else:
+        logger.warning("B2 credentials (B2_APP_KEY_ID, B2_APP_KEY) are not set. B2 functionality will be impaired.")
+    
+    if supabase_client is None: # Check if Supabase client (using SUPABASE_SERVICE_ROLE_KEY) was initialized
+         logger.warning("Supabase client could not be initialized on startup. Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.")
 
-async def get_current_user(token: Optional[str] = None) -> Optional[Dict]:
-    if token: logger.debug("Received auth token (validation not implemented).")
-    return None
+
+# --- Pydantic Models for Request/Response ---
+
+class DocumentIdentifier(BaseModel):
+    id: int 
+    b2_file_id: Optional[str] = None
+    document_title: Optional[str] = "untitled_document.pdf" 
+
+class BatchDownloadRequest(BaseModel):
+    document_ids: List[int] 
+
+class DownloadURLResponse(BaseModel):
+    url: str
+    filename: str
+
+# --- Supabase Data Access Functions ---
+
+async def fetch_document_metadata_from_supabase(document_pk: int, db: Client = Depends(get_supabase_client)) -> Optional[Dict[str, Any]]:
+    """Fetches document metadata from Supabase by its primary key (id)."""
+    try:
+        logger.info(f"Querying Supabase for document PK: {document_pk}")
+        response = await db.table("files").select("id, b2_file_id, document_title").eq("id", document_pk).maybe_single().execute()
+        if response.data:
+            logger.debug(f"Supabase response for PK {document_pk}: {response.data}")
+            return response.data
+        else:
+            logger.warning(f"Document PK {document_pk} not found in Supabase.")
+            return None
+    except Exception as e:
+        logger.error(f"Error fetching document PK {document_pk} from Supabase: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=f"Database error while fetching document {document_pk}.")
+
+
+async def fetch_batch_document_metadata_from_supabase(document_pks: List[int], db: Client = Depends(get_supabase_client)) -> List[Dict[str, Any]]:
+    """Fetches metadata for multiple documents from Supabase by their primary keys (id)."""
+    if not document_pks:
+        return []
+    try:
+        logger.info(f"Querying Supabase for batch document PKs: {document_pks}")
+        response = await db.table("files").select("id, b2_file_id, document_title").in_("id", document_pks).execute()
+        if response.data:
+            logger.debug(f"Supabase response for batch PKs {document_pks}: {response.data}")
+            return response.data
+        else:
+            logger.warning(f"No documents found in Supabase for batch PKs: {document_pks}")
+            return []
+    except Exception as e:
+        logger.error(f"Error fetching batch documents {document_pks} from Supabase: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail="Database error while fetching batch documents.")
+
 
 # --- API Endpoints ---
-PARAMS_TO_IGNORE_FOR_FILTERING = {"page", "page_size", "include_download_url"}
 
-@app.get("/documents", response_model=DocumentsResponse, tags=["Documents"])
-def list_documents(
-    request: Request,
-    page: int = Query(1, ge=1, description="Page number to retrieve."),
-    page_size: int = Query(20, ge=1, le=200, description="Number of documents per page."),
-):
-    logger.debug(f"list_documents called with page={page}, page_size={page_size}, params={request.query_params}")
+@app.get("/documents/{document_pk}/download-url", response_model=DownloadURLResponse)
+async def get_single_download_url(document_pk: int, request: Request, db: Client = Depends(get_supabase_client)):
+    logger.info(f"Requesting single download URL for document PK: {document_pk}") 
+    file_info = await fetch_document_metadata_from_supabase(document_pk, db) 
+    if not file_info:
+        raise HTTPException(status_code=404, detail="Document not found.") 
+    b2_file_id = file_info.get("b2_file_id")
+    document_title = file_info.get("document_title") or f"document_{document_pk}.pdf" 
+    if not b2_file_id:
+        logger.warning(f"Document PK {document_pk} (Title: {document_title}) found but has no associated B2 file ID.")
+        raise HTTPException(status_code=404, detail="No downloadable file associated with this document.")
     try:
-        query = supabase_client.table("files").select("*", count="exact")
+        proxy_url_path = request.url_for('b2_proxy_stream_endpoint', b2_file_id=b2_file_id, filename=document_title)
+    except Exception as e: 
+        logger.error(f"Error generating URL for proxy: {str(e)}", exc_info=True) 
+        raise HTTPException(status_code=500, detail="Error generating download link.")
+    logger.info(f"Generated proxy URL path for PK {document_pk} (B2 ID: {b2_file_id}): {proxy_url_path}")
+    return DownloadURLResponse(url=str(proxy_url_path), filename=document_title)
 
-        applied_filters = {}
-        for key, value in request.query_params.items():
-            if key in PARAMS_TO_IGNORE_FOR_FILTERING or not value:
-                continue
-            
-            # TODO: Add specific handling for known array columns if needed
-            # For now, 'cs' is used if a comma is present.
-            if "," in value:
-                vals = [v.strip() for v in value.split(",") if v.strip()]
-                if vals:
-                    query = query.cs(key, vals)
-                    applied_filters[key] = f"cs.{vals}"
-                else:
-                    logger.warning(f"Ignoring filter '{key}': comma-separated value resulted in empty list.")
-            else:
-                query = query.eq(key, value)
-                applied_filters[key] = f"eq.{value}"
 
-        if applied_filters: logger.info(f"Applying filters: {applied_filters}")
+@app.get("/api/b2-proxy/{b2_file_id}/{filename}")
+async def b2_proxy_stream_endpoint(request: Request, b2_file_id: str, filename: str):
+    logger.info(f"Proxy: Request for B2 File ID: {b2_file_id}, Filename: {filename}")
+    if not (B2_APPLICATION_KEY_ID and B2_APPLICATION_KEY): # Checks B2_APP_KEY_ID and B2_APP_KEY
+        logger.error("B2 proxy request failed: B2 service not configured on server.")
+        raise HTTPException(status_code=503, detail="File download service is not configured.")
+    async with httpx.AsyncClient() as client:
+        try:
+            b2_response = await B2Manager.download_file_stream(b2_file_id, client)
+            response_headers = {
+                "Content-Type": b2_response.headers.get("Content-Type", "application/octet-stream"),
+                "Content-Disposition": f'attachment; filename="{filename}"' 
+            }
+            if 'Content-Length' in b2_response.headers:
+                response_headers["Content-Length"] = b2_response.headers['Content-Length']
+            async def content_streamer() -> AsyncGenerator[bytes, None]:
+                async for chunk in b2_response.aiter_bytes():
+                    yield chunk
+                await b2_response.aclose() 
+            return StreamingResponse(content_streamer(), headers=response_headers)
+        except HTTPException as e:
+            logger.error(f"Proxy: HTTPException during B2 download for ID {b2_file_id}. Status: {e.status_code}, Detail: {e.detail}")
+            raise e 
+        except Exception as e:
+            logger.error(f"Proxy: Unexpected error during B2 download for ID {b2_file_id}. Error: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Unexpected error while proxying B2 download.")
 
-        start_index = (page - 1) * page_size
-        query = query.order("id", desc=False).range(start_index, start_index + page_size - 1)
 
-        logger.info(f"Executing Supabase query for page {page}, size {page_size}")
-        result = query.execute()
-
-        docs_data = result.data if result.data is not None else []
-        total_count = result.count if result.count is not None else 0
-        logger.info(f"Query successful. Found {len(docs_data)} documents (total: {total_count}).")
-
-        validated_docs = []
-        for i, doc_dict in enumerate(docs_data):
-            try:
-                validated_docs.append(DocumentOut(**doc_dict))
-            except Exception as p_exc: # More specific PydanticValidationError if preferred
-                logger.warning(f"Pydantic validation failed for document at index {i} (ID: {doc_dict.get('id', 'N/A')}): {p_exc}. Skipping this document.")
-        
-        return DocumentsResponse(
-            data=validated_docs,
-            page=page,
-            page_size=page_size,
-            total_count=total_count
-        )
-
-    except PostgrestAPIError as db_error: # Using the aliased exception
-        err_code = getattr(db_error, 'code', 'N/A')
-        logger.error(f"Database API Error: Code '{err_code}' - {db_error.message}", exc_info=True)
-        detail = f"Database query error: {db_error.message}"
-        status_code = 400
-        if err_code == '42703': detail = f"Database query error: Invalid filter field used. ({db_error.message})"
-        elif err_code == '22P02': detail = f"Database query error: Invalid value format for a filter. ({db_error.message})"
-        raise HTTPException(status_code=status_code, detail=detail)
+@app.post("/documents/batch-download-url", response_model=DownloadURLResponse)
+async def get_batch_download_url(request_payload: BatchDownloadRequest, fastapi_request_context: Request):
+    document_pks = request_payload.document_ids
+    logger.info(f"Requesting batch download URL for {len(document_pks)} document PKs: {document_pks}")
+    if not document_pks:
+        raise HTTPException(status_code=400, detail="No document IDs provided for batch download.")
+    pks_param = ",".join(map(str, document_pks))
+    try:
+        zip_serve_url_path = fastapi_request_context.url_for('serve_batch_zip_endpoint', pks_query_param=pks_param)
+        zip_filename = f"cairn_batch_{int(time.time())}.zip"
+        logger.info(f"Generated URL for batch ZIP: {zip_serve_url_path}")
+        return DownloadURLResponse(url=str(zip_serve_url_path), filename=zip_filename)
     except Exception as e:
-        logger.exception("Unexpected error fetching documents.")
-        raise HTTPException(status_code=500, detail="Internal server error: An unexpected error occurred while fetching documents.")
+        logger.error(f"Batch: Unexpected error generating batch download URL. Error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Unexpected error generating batch download URL.")
 
-@app.get("/documents/{doc_pk}/download-url", response_model=DownloadResponse, tags=["Download"])
-async def get_single_download_url(doc_pk: int):
-    if doc_pk <= 0:
-        logger.warning(f"Received invalid document PK for download URL: {doc_pk}")
-        raise HTTPException(status_code=400, detail="Invalid document Primary Key (ID).")
 
-    logger.info(f"Requesting single download URL for document PK: {doc_pk}")
+@app.get("/api/serve-batch-zip") 
+async def serve_batch_zip_endpoint(pks_query_param: str, db: Client = Depends(get_supabase_client)):
     try:
-        res = (
-            supabase_client.table("files")
-            .select("b2_file_id, document_title, document_id")
-            .eq("id", doc_pk)
-            .maybe_single()
-            .execute()
-        )
-
-        if not res.data:
-            logger.warning(f"Document PK {doc_pk} not found in database.")
-            raise HTTPException(status_code=404, detail="Document not found.")
-
-        b2_file_id = res.data.get("b2_file_id")
-        if not b2_file_id:
-            logger.warning(f"Document PK {doc_pk} (Title: {res.data.get('document_title', 'N/A')}) found but has no associated B2 file ID.")
-            raise HTTPException(status_code=404, detail="No downloadable file associated with this document.")
-
-        title = res.data.get("document_title") or res.data.get("document_id") or f"document_{doc_pk}"
-        base_filename = sanitize_filename(title)
-        filename_to_serve = f"{base_filename}.pdf" if "." not in base_filename else base_filename
-        
-        # Relative path for the frontend to construct full URL
-        proxy_url_path = f"/api/b2-proxy/{b2_file_id}/{filename_to_serve}"
-        logger.info(f"Generated proxy URL path for PK {doc_pk} (B2 ID: {b2_file_id}): {proxy_url_path}")
-
-        return DownloadResponse(url=proxy_url_path, filename=filename_to_serve, expires_in_seconds=ZIP_URL_TTL_SECONDS)
-
-    except PostgrestAPIError as db_error:
-        logger.error(f"Database error for single download URL (PK {doc_pk}): {db_error.message}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Database error retrieving file information.")
-    except Exception as e:
-        logger.exception(f"Unexpected error for single download URL (PK {doc_pk}).")
-        raise HTTPException(status_code=500, detail="Internal server error generating download link.")
-
-@app.post("/documents/batch-download-url", response_model=DownloadResponse, tags=["Download"])
-async def get_batch_download_url(request_data: BatchDownloadRequest):
-    doc_ids = request_data.document_ids
-    if not doc_ids: raise HTTPException(status_code=400, detail="No document IDs provided.")
-
-    valid_ids = [pk for pk in doc_ids if isinstance(pk, int) and pk > 0]
-    if not valid_ids:
-        logger.warning(f"Batch download: no valid IDs. Received: {doc_ids}")
-        raise HTTPException(status_code=400, detail="No valid document IDs provided.")
-    
-    ignored_ids = set(doc_ids) - set(valid_ids)
-    if ignored_ids: logger.warning(f"Batch download: ignoring invalid IDs: {ignored_ids}")
-
-    logger.info(f"Requesting batch download URL for {len(valid_ids)} document PKs: {valid_ids}")
-    try:
-        db_res = (
-            supabase_client.table("files")
-            .select("id, b2_file_id, document_title, document_id")
-            .in_("id", valid_ids)
-            .execute()
-        )
-
-        files_to_zip = [r for r in (db_res.data or []) if r.get("b2_file_id")]
-        found_db_ids = {r["id"] for r in (db_res.data or [])}
-        not_found_or_no_b2 = set(valid_ids) - {r["id"] for r in files_to_zip}
-
-        if not_found_or_no_b2:
-            logger.warning(f"Batch download: PKs not found, or no B2 ID for: {not_found_or_no_b2}")
-        if not files_to_zip:
-            logger.warning("Batch download: No downloadable files found for the requested IDs.")
-            raise HTTPException(status_code=404, detail="None of the requested documents are available for download.")
-
+        document_pks = [int(pk_str) for pk_str in pks_query_param.split(',') if pk_str.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid document PKs format in query parameter.")
+    if not document_pks:
+        raise HTTPException(status_code=400, detail="No document PKs provided for zipping.")
+    logger.info(f"Serving batch ZIP for PKs: {document_pks}")
+    all_file_metadata = await fetch_batch_document_metadata_from_supabase(document_pks, db)
+    valid_files_to_zip: List[DocumentIdentifier] = []
+    pks_requested = set(document_pks)
+    pks_found_with_b2id = set()
+    for meta in all_file_metadata:
+        pk = meta.get("id")
+        b2_id = meta.get("b2_file_id")
+        title = meta.get("document_title") or f"file_{pk}.pdf" 
+        if b2_id:
+            valid_files_to_zip.append(DocumentIdentifier(id=pk, b2_file_id=b2_id, document_title=title))
+            pks_found_with_b2id.add(pk)
+        else:
+            logger.warning(f"Batch ZIP: Document PK {pk} (Title: {title}) has no B2 file ID. Skipping.")
+    pks_missing_or_no_b2id = pks_requested - pks_found_with_b2id
+    if pks_missing_or_no_b2id:
+         logger.warning(f"Batch ZIP: PKs requested but not found with B2 ID (or not in DB): {pks_missing_or_no_b2id}")
+    if not valid_files_to_zip:
+        logger.error("Batch ZIP: No valid files with B2 IDs found for zipping from the requested PKs.")
+        raise HTTPException(status_code=404, detail="No downloadable files found for the selected documents.")
+    zip_filename = f"cairn_documents_{int(time.time())}.zip"
+    response_headers = {
+        "Content-Disposition": f'attachment; filename="{zip_filename}"',
+        "Content-Type": "application/zip"
+    }
+    async def zip_content_streamer() -> AsyncGenerator[bytes, None]:
         zip_buffer = io.BytesIO()
-        files_added_count = 0
-        download_errors_pks = []
+        files_added_to_zip = 0
+        async with httpx.AsyncClient() as client:
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                for doc_to_zip in valid_files_to_zip:
+                    try:
+                        logger.info(f"Batch ZIP: Fetching B2 file ID {doc_to_zip.b2_file_id} for PK {doc_to_zip.id}")
+                        b2_response = await B2Manager.download_file_stream(doc_to_zip.b2_file_id, client)
+                        file_content = await b2_response.aread() 
+                        await b2_response.aclose()
+                        entry_filename = doc_to_zip.document_title 
+                        zf.writestr(entry_filename, file_content)
+                        files_added_to_zip += 1
+                        logger.info(f"Batch ZIP: Added {entry_filename} (B2 ID: {doc_to_zip.b2_file_id}) to ZIP.")
+                    except HTTPException as e:
+                        logger.error(f"Batch ZIP: Failed to download/add file PK {doc_to_zip.id} (B2 ID: {doc_to_zip.b2_file_id}) to ZIP. Detail: {e.detail}")
+                    except Exception as e:
+                        logger.error(f"Batch ZIP: Unexpected error processing file PK {doc_to_zip.id} (B2 ID: {doc_to_zip.b2_file_id}). Error: {str(e)}", exc_info=True)
+            if files_added_to_zip == 0:
+                logger.error("Batch ZIP: All B2 download attempts failed for initially valid files. ZIP will be empty or incomplete.")
+            zip_buffer.seek(0)
+            chunk_size = 8192 
+            while True:
+                chunk = zip_buffer.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+    return StreamingResponse(zip_content_streamer(), headers=response_headers)
 
-        b2_auth_token = b2_api.account_info.get_account_auth_token()
-        headers = {"Authorization": b2_auth_token}
+# --- Main execution (for local testing if needed) ---
+# if __name__ == "__main__":
+#     import uvicorn
+#     # Ensure B2_APP_KEY_ID, B2_APP_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY are set
+#     if not all([os.getenv("B2_APP_KEY_ID"), os.getenv("B2_APP_KEY"), os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY")]):
+#         print("ERROR: B2_APP_KEY_ID, B2_APP_KEY, SUPABASE_URL, and SUPABASE_SERVICE_ROLE_KEY environment variables must be set.")
+#     else:
+#         # Example: uvicorn your_module_name:app --reload
+#         uvicorn.run(app, host="0.0.0.0", port=8000)
 
-        with requests.Session() as session, \
-             zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zip_file:
-            for record in files_to_zip:
-                b2_file_id, pk = record["b2_file_id"], record["id"]
-                title = record.get("document_title") or record.get("document_id") or f"document_{pk}"
-                entry_filename = sanitize_filename(title)
-                entry_filename = f"{entry_filename}.pdf" if "." not in entry_filename else entry_filename
-                file_url = f"{B2_DOWNLOAD_URL_BASE}/b2api/v1/b2_download_file_by_id?fileId={b2_file_id}"
-                try:
-                    logger.debug(f"Batch: Downloading B2 file {b2_file_id} (PK {pk}) for ZIP...")
-                    response = session.get(file_url, headers=headers, timeout=60)
-                    response.raise_for_status()
-                    zip_file.writestr(entry_filename, response.content)
-                    files_added_count += 1
-                except requests.exceptions.RequestException as req_err:
-                    logger.error(f"Batch: Failed to download file PK {pk} (B2 ID: {b2_file_id}): {req_err}")
-                    download_errors_pks.append(pk)
-                except Exception as e_zip:
-                    logger.exception(f"Batch: Unexpected error with file PK {pk} (B2 ID: {b2_file_id}) for ZIP.")
-                    download_errors_pks.append(pk)
-        
-        if files_added_count == 0:
-            logger.error("Batch: Failed to download any files for the ZIP.")
-            raise HTTPException(status_code=500, detail="Failed to retrieve any files for the ZIP archive.")
-        if download_errors_pks:
-            logger.warning(f"Batch: Errors occurred downloading files for PKs: {download_errors_pks}")
-
-        zip_buffer.seek(0)
-        temp_zip_b2_filename = f"{B2_TEMP_ZIP_PREFIX}{uuid.uuid4()}.zip"
-        final_zip_filename = f"cairn_documents_{files_added_count}_files.zip"
-        
-        logger.info(f"Uploading generated ZIP ({zip_buffer.getbuffer().nbytes} bytes) to B2 as '{temp_zip_b2_filename}'...")
-        uploaded_file_info = b2_bucket.upload_bytes(zip_buffer.getvalue(), temp_zip_b2_filename, content_type="application/zip")
-        zip_b2_file_id = uploaded_file_info.id_
-        logger.info(f"Batch: Successfully uploaded ZIP. B2 File ID: {zip_b2_file_id}")
-        
-        # Relative path for the frontend
-        zip_proxy_url_path = f"/api/b2-proxy/{zip_b2_file_id}/{final_zip_filename}"
-        return DownloadResponse(url=zip_proxy_url_path, filename=final_zip_filename, expires_in_seconds=ZIP_URL_TTL_SECONDS)
-
-    except b2_exceptions.B2Error as b2e:
-        logger.exception(f"Batch: B2 Error during ZIP upload: {b2e}")
-        raise HTTPException(status_code=503, detail="Failed to store generated ZIP file.")
-    except PostgrestAPIError as db_error:
-        logger.error(f"Batch: Database error: {db_error.message}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Database error preparing batch download.")
-    except Exception as e:
-        logger.exception("Batch: Unexpected error generating batch download URL.")
-        raise HTTPException(status_code=500, detail="Internal server error generating batch download link.")
-
-@app.get("/api/b2-proxy/{b2_file_id}/{intended_filename}")
-async def proxy_b2_download(b2_file_id: str, intended_filename: str):
-    if not b2_file_id: raise HTTPException(status_code=400, detail="Missing B2 File ID.")
-    intended_filename = sanitize_filename(intended_filename or "downloaded_file")
-    logger.info(f"Proxy: Request for B2 File ID: {b2_file_id}, Filename: {intended_filename}")
-
-    try:
-        download_url = f"{B2_DOWNLOAD_URL_BASE}/b2api/v1/b2_download_file_by_id?fileId={b2_file_id}"
-        auth_token = b2_api.account_info.get_account_auth_token()
-        b2_headers = {"Authorization": auth_token}
-        logger.debug(f"Proxy: Requesting from B2 URL: {download_url}")
-
-        with requests.Session() as session:
-            response = session.get(download_url, headers=b2_headers, stream=True, timeout=60)
-            response.raise_for_status()
-            content_type = response.headers.get('Content-Type', 'application/octet-stream')
-            content_length = response.headers.get('Content-Length')
-            client_resp_headers = {"Content-Disposition": f'attachment; filename="{intended_filename}"'}
-            if content_length: client_resp_headers["Content-Length"] = content_length
-            logger.info(f"Proxy: Streaming B2 file {b2_file_id} as '{intended_filename}' ({content_type}, Size: {content_length or 'Unknown'}).")
-            return StreamingResponse(response.iter_content(chunk_size=8192), media_type=content_type, headers=client_resp_headers)
-
-    except requests.exceptions.HTTPError as http_err:
-        status = getattr(http_err.response, 'status_code', 500)
-        resp_text = getattr(http_err.response, 'text', 'No response text')
-        logger.error(f"Proxy: B2 download HTTPError. ID {b2_file_id}. Status: {status}, Response: {resp_text[:200]}...")
-        detail, proxy_status = f"Failed to retrieve file from storage (Status: {status}).", 502 # Bad Gateway
-        if status == 401: detail, proxy_status = "Authentication error with file storage.", 503
-        elif status == 404: detail, proxy_status = "File not found in remote storage.", 404
-        raise HTTPException(status_code=proxy_status, detail=detail)
-    except requests.exceptions.RequestException as req_err:
-        logger.exception(f"Proxy: Network error for B2 ID {b2_file_id}: {req_err}")
-        raise HTTPException(status_code=504, detail="Network error communicating with file storage.")
-    except Exception as e:
-        logger.exception(f"Proxy: Unexpected error for B2 ID {b2_file_id}.")
-        raise HTTPException(status_code=500, detail="Internal server error during file download.")
-
-# --- Main Execution Guard (for local testing) ---
-if __name__ == "__main__":
-    import uvicorn
-    # The logger instance is already configured at the module level
-    logger.info("Starting Uvicorn server for local development (app.py)...")
-    uvicorn.run(
-        "__main__:app", # Runs the 'app' object from the current file when executed as a script
-        host="0.0.0.0",
-        port=int(os.getenv("PORT", 8000)),
-        reload=True,
-        log_level="debug" # Uvicorn's own log level, separate from app logging for its messages
-    )
