@@ -6,6 +6,7 @@ import logging # For logging application events
 from typing import Optional, Dict, Any, List, AsyncGenerator
 import io # For in-memory file operations (e.g., zipping)
 import zipfile # For creating ZIP archives
+from urllib.parse import urlencode # For encoding query parameters
 
 from fastapi import FastAPI, Request, HTTPException, Depends, Query
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -188,15 +189,9 @@ class PaginatedDocumentsResponse(BaseModel):
 
 # --- Supabase Data Access Functions ---
 
-# IMPORTANT: Supabase client's execute() is synchronous.
-# Calling synchronous I/O-bound operations directly in async functions can block the event loop.
-# For production, use `fastapi.concurrency.run_in_threadpool` or an async Supabase client if available.
-# For this fix, we are removing 'await' as the immediate cause of the TypeError.
-
 async def fetch_document_metadata_from_supabase(document_pk: int, db: Client = Depends(get_supabase_client)) -> Optional[Dict[str, Any]]:
     try:
         logger.info(f"Querying Supabase for document PK: {document_pk}")
-        # REMOVED await from the next line
         response: PostgrestAPIResponse = db.table("files").select("id, b2_file_id, document_title").eq("id", document_pk).maybe_single().execute()
         if response.data:
             logger.debug(f"Supabase response for PK {document_pk}: {response.data}")
@@ -213,7 +208,6 @@ async def fetch_batch_document_metadata_from_supabase(document_pks: List[int], d
         return []
     try:
         logger.info(f"Querying Supabase for batch document PKs: {document_pks}")
-        # REMOVED await from the next line
         response: PostgrestAPIResponse = db.table("files").select("id, b2_file_id, document_title").in_("id", document_pks).execute()
         if response.data:
             logger.debug(f"Supabase response for batch PKs {document_pks}: {response.data}")
@@ -227,7 +221,7 @@ async def fetch_batch_document_metadata_from_supabase(document_pks: List[int], d
 
 # --- API Endpoints ---
 
-@app.get("/")
+@app.get("/", methods=["GET", "HEAD"]) # Added HEAD method
 async def read_root():
     """Simple root endpoint."""
     return {"message": "Welcome to the CAIRN API. See /docs for API documentation."}
@@ -269,7 +263,6 @@ async def list_documents(
     query = query.order("id", desc=False) 
     query = query.range(offset, offset + page_size - 1)
     try:
-        # REMOVED await from the next line
         response: PostgrestAPIResponse = query.execute()
         if response.data is None: 
             logger.error("Supabase query execution returned None for data.")
@@ -277,7 +270,7 @@ async def list_documents(
         documents = response.data
         total_count = response.count if response.count is not None else 0 
     except Exception as e:
-        logger.error(f"Error querying documents from Supabase: {e}", exc_info=True) # This is where the TypeError was logged
+        logger.error(f"Error querying documents from Supabase: {e}", exc_info=True) 
         raise HTTPException(status_code=503, detail="Database error while listing documents.")
     total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 1
     logger.info(f"Found {total_count} documents matching criteria. Returning page {page}/{total_pages} with {len(documents)} items.")
@@ -343,9 +336,17 @@ async def get_batch_download_url(request_payload: BatchDownloadRequest, fastapi_
     logger.info(f"Requesting batch download URL for {len(document_pks)} document PKs: {document_pks}")
     if not document_pks:
         raise HTTPException(status_code=400, detail="No document IDs provided for batch download.")
-    pks_param = ",".join(map(str, document_pks))
+    
+    pks_param_value = ",".join(map(str, document_pks))
+    
     try:
-        zip_serve_url_path = fastapi_request_context.url_for('serve_batch_zip_endpoint', pks_query_param=pks_param)
+        # Generate the base path for the route
+        base_zip_serve_path = fastapi_request_context.url_for('serve_batch_zip_endpoint')
+        
+        # Manually construct the query string
+        query_params = urlencode({"pks_query_param": pks_param_value})
+        zip_serve_url_path = f"{base_zip_serve_path}?{query_params}"
+        
         zip_filename = f"cairn_batch_{int(time.time())}.zip"
         logger.info(f"Generated URL for batch ZIP: {zip_serve_url_path}")
         return DownloadURLResponse(url=str(zip_serve_url_path), filename=zip_filename)
