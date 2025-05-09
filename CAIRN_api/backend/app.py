@@ -221,14 +221,9 @@ async def fetch_batch_document_metadata_from_supabase(document_pks: List[int], d
 
 # --- API Endpoints ---
 
-# Corrected root endpoint definition using @app.api_route
 @app.api_route("/", methods=["GET", "HEAD"]) 
 async def read_root():
     """Simple root endpoint."""
-    # For HEAD requests, FastAPI typically handles sending an empty body automatically
-    # if a response body is returned by the handler.
-    # If you need specific HEAD logic (e.g. custom headers without a body), 
-    # you might check request.method.
     return {"message": "Welcome to the CAIRN API. See /docs for API documentation."}
 
 @app.get("/documents", response_model=PaginatedDocumentsResponse)
@@ -299,6 +294,8 @@ async def get_single_download_url(document_pk: int, request: Request, db: Client
         logger.warning(f"Document PK {document_pk} (Title: {document_title}) found but has no associated B2 file ID.")
         raise HTTPException(status_code=404, detail="No downloadable file associated with this document.")
     try:
+        # Assuming 'b2_proxy_stream_endpoint' is the correct function name for the route
+        # This should generate a relative path like /api/b2-proxy/{b2_file_id}/{filename}
         proxy_url_path = request.url_for('b2_proxy_stream_endpoint', b2_file_id=b2_file_id, filename=document_title)
     except Exception as e: 
         logger.error(f"Error generating URL for proxy: {str(e)}", exc_info=True) 
@@ -345,11 +342,14 @@ async def get_batch_download_url(request_payload: BatchDownloadRequest, fastapi_
     pks_param_value = ",".join(map(str, document_pks))
     
     try:
-        base_zip_serve_path = fastapi_request_context.url_for('serve_batch_zip_endpoint')
+        # Manually construct the relative path to ensure it's always relative
+        # This avoids potential issues with url_for() generating absolute or malformed URLs in some proxy environments
+        known_relative_path_for_zip_serve = "/api/serve-batch-zip" # Path of the serve_batch_zip_endpoint
         query_params = urlencode({"pks_query_param": pks_param_value})
-        zip_serve_url_path = f"{base_zip_serve_path}?{query_params}"
+        zip_serve_url_path = f"{known_relative_path_for_zip_serve}?{query_params}"
+        
         zip_filename = f"cairn_batch_{int(time.time())}.zip"
-        logger.info(f"Generated URL for batch ZIP: {zip_serve_url_path}")
+        logger.info(f"Generated relative URL for batch ZIP: {zip_serve_url_path}") # Log the generated path
         return DownloadURLResponse(url=str(zip_serve_url_path), filename=zip_filename)
     except Exception as e:
         logger.error(f"Batch: Unexpected error generating batch download URL. Error: {str(e)}", exc_info=True)
@@ -419,3 +419,10 @@ async def serve_batch_zip_endpoint(pks_query_param: str, db: Client = Depends(ge
                 yield chunk
     return StreamingResponse(zip_content_streamer(), headers=response_headers)
 
+# --- Main execution (for local testing if needed) ---
+# if __name__ == "__main__":
+#     import uvicorn
+#     if not all([os.getenv("B2_APP_KEY_ID"), os.getenv("B2_APP_KEY"), os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY")]):
+#         print("ERROR: B2_APP_KEY_ID, B2_APP_KEY, SUPABASE_URL, and SUPABASE_SERVICE_ROLE_KEY environment variables must be set.")
+#     else:
+#         uvicorn.run("your_module_name_if_different:app", host="0.0.0.0", port=8000, reload=True) # Replace your_module_name_if_different
