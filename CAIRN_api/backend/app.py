@@ -42,6 +42,9 @@ else:
     logger.warning("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables not set. Supabase functionality will be impaired.")
 
 # Dependency to get Supabase client
+# Note: For synchronous Supabase calls within async endpoints,
+# consider running them in a thread pool for production to avoid blocking.
+# For simplicity here, we are calling them directly.
 async def get_supabase_client() -> Client:
     if supabase_client is None:
         logger.error("Supabase client is not available. Check configuration and environment variables (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).")
@@ -177,7 +180,7 @@ class DownloadURLResponse(BaseModel):
     filename: str
 
 class PaginatedDocumentsResponse(BaseModel):
-    data: List[Dict[str, Any]] # Using Dict for flexibility, can be a Pydantic model too
+    data: List[Dict[str, Any]] 
     total_count: int
     page: int
     page_size: int
@@ -185,10 +188,16 @@ class PaginatedDocumentsResponse(BaseModel):
 
 # --- Supabase Data Access Functions ---
 
+# IMPORTANT: Supabase client's execute() is synchronous.
+# Calling synchronous I/O-bound operations directly in async functions can block the event loop.
+# For production, use `fastapi.concurrency.run_in_threadpool` or an async Supabase client if available.
+# For this fix, we are removing 'await' as the immediate cause of the TypeError.
+
 async def fetch_document_metadata_from_supabase(document_pk: int, db: Client = Depends(get_supabase_client)) -> Optional[Dict[str, Any]]:
     try:
         logger.info(f"Querying Supabase for document PK: {document_pk}")
-        response = await db.table("files").select("id, b2_file_id, document_title").eq("id", document_pk).maybe_single().execute()
+        # REMOVED await from the next line
+        response: PostgrestAPIResponse = db.table("files").select("id, b2_file_id, document_title").eq("id", document_pk).maybe_single().execute()
         if response.data:
             logger.debug(f"Supabase response for PK {document_pk}: {response.data}")
             return response.data
@@ -204,7 +213,8 @@ async def fetch_batch_document_metadata_from_supabase(document_pks: List[int], d
         return []
     try:
         logger.info(f"Querying Supabase for batch document PKs: {document_pks}")
-        response = await db.table("files").select("id, b2_file_id, document_title").in_("id", document_pks).execute()
+        # REMOVED await from the next line
+        response: PostgrestAPIResponse = db.table("files").select("id, b2_file_id, document_title").in_("id", document_pks).execute()
         if response.data:
             logger.debug(f"Supabase response for batch PKs {document_pks}: {response.data}")
             return response.data
@@ -224,30 +234,20 @@ async def read_root():
 
 @app.get("/documents", response_model=PaginatedDocumentsResponse)
 async def list_documents(
-    request: Request, # To access query parameters not explicitly defined
+    request: Request, 
     db: Client = Depends(get_supabase_client),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=200, description="Number of items per page"),
-    # Add other explicit query parameters your frontend uses for filtering
     org_utility_name: Optional[str] = Query(None, description="Filter by organization or utility name"),
     document_author: Optional[str] = Query(None, description="Filter by document author"),
     document_type: Optional[str] = Query(None, description="Filter by document type"),
     document_subtype: Optional[str] = Query(None, description="Filter by document subtype"),
     state_region: Optional[str] = Query(None, description="Filter by state or region"),
-    jurisdiction_type: Optional[str] = Query(None, description="Filter by jurisdiction type"), # Matches frontend 'Jurisdiction'
+    jurisdiction_type: Optional[str] = Query(None, description="Filter by jurisdiction type"), 
     regulatory_body: Optional[str] = Query(None, description="Filter by regulatory body")
-    # Add more filters as needed, matching your 'files' table columns
 ):
-    """
-    Lists documents from the 'files' table with pagination and filtering.
-    """
     offset = (page - 1) * page_size
-    
-    query = db.table("files").select("*", count="exact") # Select all columns, get exact count
-
-    # Apply filters - using 'ilike' for case-insensitive partial matches
-    # Your frontend sends exact matches based on text input, so 'eq' or 'ilike' could work.
-    # Using 'ilike' for flexibility if user types partial names.
+    query = db.table("files").select("*", count="exact") 
     filter_map = {
         "org_utility_name": org_utility_name,
         "document_author": document_author,
@@ -257,44 +257,30 @@ async def list_documents(
         "jurisdiction_type": jurisdiction_type,
         "regulatory_body": regulatory_body,
     }
-
     active_filters_log = {}
     for column, value in filter_map.items():
         if value:
-            # For exact match: query = query.eq(column, value)
-            # For case-insensitive partial match:
             query = query.ilike(column, f"%{value}%")
             active_filters_log[column] = value
-    
     if active_filters_log:
         logger.info(f"Applying filters to /documents: {active_filters_log}")
     else:
         logger.info("Fetching /documents with no filters (except pagination).")
-
-    # Apply ordering, e.g., by ID or a date field
-    query = query.order("id", desc=False) # Example: order by id ascending
-    
-    # Apply pagination
+    query = query.order("id", desc=False) 
     query = query.range(offset, offset + page_size - 1)
-
     try:
-        response: PostgrestAPIResponse = await query.execute()
-        
-        if response.data is None: # Should not happen with execute() unless major issue
+        # REMOVED await from the next line
+        response: PostgrestAPIResponse = query.execute()
+        if response.data is None: 
             logger.error("Supabase query execution returned None for data.")
             raise HTTPException(status_code=500, detail="Error fetching documents from database.")
-
         documents = response.data
-        total_count = response.count if response.count is not None else 0 # Total count matching filters
-
+        total_count = response.count if response.count is not None else 0 
     except Exception as e:
-        logger.error(f"Error querying documents from Supabase: {e}", exc_info=True)
+        logger.error(f"Error querying documents from Supabase: {e}", exc_info=True) # This is where the TypeError was logged
         raise HTTPException(status_code=503, detail="Database error while listing documents.")
-
     total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 1
-    
     logger.info(f"Found {total_count} documents matching criteria. Returning page {page}/{total_pages} with {len(documents)} items.")
-
     return PaginatedDocumentsResponse(
         data=documents,
         total_count=total_count,
@@ -302,7 +288,6 @@ async def list_documents(
         page_size=page_size,
         total_pages=total_pages
     )
-
 
 @app.get("/documents/{document_pk}/download-url", response_model=DownloadURLResponse)
 async def get_single_download_url(document_pk: int, request: Request, db: Client = Depends(get_supabase_client)):
